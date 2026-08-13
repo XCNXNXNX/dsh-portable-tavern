@@ -1,0 +1,8 @@
+# dsh-portable-tavern bundle patch: inserts the dual-face plugin row into the
+# web profile roster. The row is a bare plugin by package name: the node half
+# (exports ".") runs in the host process (LLM-backed /api/dsh-portable-tavern
+# routes), and the `dsh.client` declaration in package.json makes the browser
+# half (exports "./client", served at /plugins/<id>/client.js) load in the GUI.
+- insert:
+    - id: portable-tavern
+      name: 'dsh-portable-tavern'

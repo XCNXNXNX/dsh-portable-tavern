@@ -1,0 +1,12 @@
+{
+  "name": "dsh-portable-tavern",
+  "description": "Portable Tavern for the DeepSeek Harness web GUI",
+  "version": "0.1.0",
+  "entry": {
+    "name": "dsh-portable-tavern",
+    "inject": []
+  },
+  "client": {
+    "platform": "web"
+  }
+}
