@@ -83,7 +83,7 @@ export declare function streamCompletion(ctx: Context, options: GenerateOptions)
 export declare function streamText(ctx: Context, options: GenerateOptions): Promise<string>;
 export declare function buildPrompt(spec: TavernSpec): string;
 export declare function buildWorldbookPrompt(spec: TavernSpec, card: CharCard | null): string;
-export declare function buildChatSystem(card: CharCard): string;
+export declare function buildChatSystem(card: CharCard, globalPrompt?: string): string;
 /** Prefer a tool-call argument, then plain-text JSON (with a tolerant repair). */
 export declare function parseResult(result: {
     text: string;
@@ -116,4 +116,4 @@ export declare function listModels(ctx: Context): Promise<{
     } | null;
 }>;
 /** Produce the character's reply for one chat turn. */
-export declare function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string): Promise<string>;
+export declare function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string): Promise<string>;

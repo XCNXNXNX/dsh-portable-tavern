@@ -123,6 +123,22 @@ const CSS_TEXT = `
 .stSettingsEntry{display:flex;flex-direction:column;gap:14px;max-width:560px}
 .stSettingsTitle{font-size:18px;font-weight:700;color:inherit}
 .stSettingsDesc{color:inherit;opacity:0.72;font-size:13px;line-height:1.7;margin:0}
+.stChatAvatarImg{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}
+.stAvatarRow{display:flex;align-items:center;gap:12px}
+.stAvatarActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.stAvatarPreview{width:64px;height:64px;border-radius:50%;overflow:hidden;flex:none;border:2px solid #2e323d;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:24px;background:#2a2f3a}
+.stAvatarPreviewImg{width:100%;height:100%;object-fit:cover;display:block}
+.stCardHead{display:flex;align-items:center;gap:10px}
+.stCardAvatar{width:44px;height:44px;border-radius:50%;object-fit:cover;flex:none;border:2px solid #2e323d;display:block}
+.stLib{border-top:1px solid #262932;margin-top:12px;padding-top:12px}
+.stLibHead{color:#9aa0ab;font-size:12px;margin-bottom:8px}
+.stLibItem{display:flex;align-items:center;gap:10px;border:1px solid #262932;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#1b1e25}
+.stLibAvatar{width:30px;height:30px;border-radius:50%;object-fit:cover;display:block;flex:none}
+.stLibAvatarFallback{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#2a2f3a;color:#fff;font-weight:700;font-size:13px;flex:none}
+.stLibName{flex:1;min-width:0;font-size:13px;color:#e8e9ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stLibMeta{color:#6f7683;font-size:11px;flex:none;white-space:nowrap}
+.stMsgAvatar{width:26px;height:26px;border-radius:50%;overflow:hidden;flex:none;margin-top:2px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700}
+.stMsgAvatarImg{width:100%;height:100%;object-fit:cover;display:block}
 `
 
 export function adoptStyles(): void {

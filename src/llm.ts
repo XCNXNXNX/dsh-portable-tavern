@@ -176,11 +176,16 @@ export function buildWorldbookPrompt(spec: TavernSpec, card: CharCard | null): s
   ].join('\n')
 }
 
-export function buildChatSystem(card: CharCard): string {
+export function buildChatSystem(card: CharCard, globalPrompt?: string): string {
   const d = card.data
   const name = d.name || '角色'
   const clean = (s: string): string => String(s || '').split('{{char}}').join(name).split('{{user}}').join('你')
   const parts: string[] = []
+  const g = (globalPrompt ?? '').trim()
+  if (g) {
+    parts.push('【全局指令】')
+    parts.push(clean(g))
+  }
   parts.push('你正在扮演角色「' + name + '」，请完全代入这个角色，以角色的视角与用户进行沉浸式角色扮演。')
   if (d.system_prompt) parts.push('【行为指令】\n' + clean(d.system_prompt))
   if (d.description) parts.push('【角色设定】\n' + clean(d.description))
@@ -381,11 +386,11 @@ export async function listModels(ctx: Context): Promise<{ options: { provider: s
 }
 
 /** Produce the character's reply for one chat turn. */
-export async function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string): Promise<string> {
+export async function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string): Promise<string> {
   const route = await resolveRoute(ctx)
   const p = provider && model ? provider : route.provider
   const m = provider && model ? model : route.model
-  const system = buildChatSystem(card)
+  const system = buildChatSystem(card, globalPrompt)
   const modelMessages = messages.map((msg) => mkMessage(msg.role === 'assistant' ? 'assistant' : 'user', msg.content, p, m))
   return streamText(ctx, {
     provider: p,

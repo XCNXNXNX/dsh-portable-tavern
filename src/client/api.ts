@@ -63,7 +63,7 @@ export class TavernApi {
     return readJson<ModelsResponse>(response)
   }
 
-  async chat(card: CharCard, messages: ChatMessage[], provider?: string, model?: string): Promise<ChatResponse> {
-    return post<ChatResponse>(TAVERN_API.chat, { card, messages, provider, model })
+  async chat(card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string): Promise<ChatResponse> {
+    return post<ChatResponse>(TAVERN_API.chat, { card, messages, provider, model, globalPrompt })
   }
 }

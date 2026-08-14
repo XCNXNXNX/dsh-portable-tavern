@@ -151,8 +151,9 @@ export function makeRoutes(ctx: Context): WebRoute[] {
         const messages = (Array.isArray(body.messages) ? body.messages : []) as ChatMessage[]
         const provider = typeof body.provider === 'string' ? body.provider : undefined
         const model = typeof body.model === 'string' ? body.model : undefined
+        const globalPrompt = typeof body.globalPrompt === 'string' ? body.globalPrompt : undefined
         try {
-          const reply = await chatReply(ctx, card, messages, provider, model)
+          const reply = await chatReply(ctx, card, messages, provider, model, globalPrompt)
           writeJson(res, 200, { reply })
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))

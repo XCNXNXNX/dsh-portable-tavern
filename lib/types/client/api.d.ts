@@ -12,5 +12,5 @@ export declare class TavernApi {
     generate(spec: TavernSpec, version: string): Promise<GenerateResponse>;
     worldbook(spec: TavernSpec, card: CharCard | null): Promise<WorldbookResponse>;
     models(): Promise<ModelsResponse>;
-    chat(card: CharCard, messages: ChatMessage[], provider?: string, model?: string): Promise<ChatResponse>;
+    chat(card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string): Promise<ChatResponse>;
 }

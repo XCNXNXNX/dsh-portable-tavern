@@ -113,6 +113,55 @@ function saveTemplates(list: { name: string; spec: TavernSpec }[]): void {
   try { localStorage.setItem('dsh.portable-tavern.templates.v1', JSON.stringify(list)) } catch { /* quota */ }
 }
 
+// ---------------------------------------------------------------------------
+// workspace (current session) + character library persistence
+// ---------------------------------------------------------------------------
+
+interface SavedCharacter {
+  id: string
+  name: string
+  savedAt: number
+  card: CharCard
+  worldbook: { entries: WorldbookEntry[] } | null
+  chat: ChatMessage[]
+  avatar: string
+}
+
+interface WorkspaceState {
+  spec: TavernSpec
+  card: CharCard | null
+  worldbook: { entries: WorldbookEntry[] } | null
+  chat: ChatMessage[]
+  version: string
+  chatModel: string
+  globalPrompt: string
+  avatar: string
+}
+
+const WS_KEY = 'dsh.portable-tavern.workspace.v1'
+const CHARS_KEY = 'dsh.portable-tavern.characters.v1'
+
+function loadWorkspace(): Partial<WorkspaceState> {
+  try {
+    const raw = localStorage.getItem(WS_KEY)
+    return raw ? JSON.parse(raw) as Partial<WorkspaceState> : {}
+  } catch { return {} }
+}
+function saveWorkspace(ws: WorkspaceState): void {
+  try { localStorage.setItem(WS_KEY, JSON.stringify(ws)) } catch { /* quota */ }
+}
+
+function loadCharacters(): SavedCharacter[] {
+  try {
+    const raw = localStorage.getItem(CHARS_KEY)
+    const list: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(list) ? list as SavedCharacter[] : []
+  } catch { return [] }
+}
+function saveCharacters(list: SavedCharacter[]): void {
+  try { localStorage.setItem(CHARS_KEY, JSON.stringify(list)) } catch { /* quota */ }
+}
+
 function musicDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     try {
@@ -201,6 +250,36 @@ function normalizeWorldbook(obj: unknown): WorldbookEntry[] {
 function avatarGradient(spec: TavernSpec): string {
   const a = spec.appearance
   return 'linear-gradient(135deg,' + (a.hairColor || '#8b5a2b') + ',' + (a.skinColor || '#f2c9a0') + ')'
+}
+
+/** Read an image file and downscale it to a compact JPEG data URL for the avatar. */
+function fileToAvatar(file: File, cb: (dataUrl: string) => void): void {
+  const reader = new FileReader()
+  reader.onload = () => {
+    const src = String(reader.result)
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const max = 256
+        let w = img.naturalWidth || img.width
+        let h = img.naturalHeight || img.height
+        if (!w || !h) { cb(src); return }
+        const scale = Math.min(1, max / Math.max(w, h))
+        w = Math.max(1, Math.round(w * scale))
+        h = Math.max(1, Math.round(h * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w; canvas.height = h
+        const g = canvas.getContext('2d')
+        if (!g) { cb(src); return }
+        g.drawImage(img, 0, 0, w, h)
+        cb(canvas.toDataURL('image/jpeg', 0.85))
+      } catch { cb(src) }
+    }
+    img.onerror = () => cb(src)
+    img.src = src
+  }
+  reader.onerror = () => cb('')
+  reader.readAsDataURL(file)
 }
 
 function describeSpec(spec: TavernSpec): string {
@@ -346,7 +425,7 @@ function Btn(props: { children: React.ReactNode; variant?: 'primary' | 'ghost'; 
 // main panel
 // ---------------------------------------------------------------------------
 
-function CardPreview(props: { card: CharCard }): React.ReactElement {
+function CardPreview(props: { card: CharCard; avatar: string }): React.ReactElement {
   const d = props.card.data
   const items: [keyof CharCard['data'], string][] = [
     ['description', '描述'], ['personality', '性格'], ['scenario', '场景'], ['first_mes', '首条问候'],
@@ -354,7 +433,10 @@ function CardPreview(props: { card: CharCard }): React.ReactElement {
   ]
   return (
     <div className={css.stCardPreview}>
-      <div className={css.stCardName}>{d.name || '未命名角色'}</div>
+      <div className={css.stCardHead}>
+        {props.avatar ? <img className={css.stCardAvatar} src={props.avatar} alt={d.name} /> : null}
+        <div className={css.stCardName}>{d.name || '未命名角色'}</div>
+      </div>
       {d.tags.length ? <div className={css.stCardTags}>{d.tags.map((t) => <span key={t} className={css.stCardTag}>{t}</span>)}</div> : null}
       {items.map(([key, label]) => {
         const v = d[key] as string
@@ -390,27 +472,31 @@ function downloadFile(filename: string, blob: Blob): void {
 
 function PortableTavern(props: { store: TavernStore; open: boolean }): React.ReactElement {
   const api = useState(() => new TavernApi())[0]
-  const [spec, setSpec] = useState<TavernSpec>(DEFAULT_SPEC)
-  const [card, setCard] = useState<CharCard | null>(null)
-  const [version, setVersion] = useState('v2')
+  const [ws] = useState(loadWorkspace)
+  const [spec, setSpec] = useState<TavernSpec>(() => (ws.spec ?? DEFAULT_SPEC))
+  const [card, setCard] = useState<CharCard | null>(() => (ws.card ?? null))
+  const [version, setVersion] = useState(() => (ws.version ?? 'v2'))
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [fallback, setFallback] = useState(false)
   const [rawText, setRawText] = useState('')
   const [charTab, setCharTab] = useState('preview')
   const [jsonDraft, setJsonDraft] = useState('')
-  const [worldbook, setWorldbook] = useState<{ entries: WorldbookEntry[] } | null>(null)
+  const [worldbook, setWorldbook] = useState<{ entries: WorldbookEntry[] } | null>(() => (ws.worldbook ?? null))
   const [wbGenerating, setWbGenerating] = useState(false)
   const [wbError, setWbError] = useState('')
   const [templates, setTemplates] = useState(loadTemplates)
   const [templateName, setTemplateName] = useState('')
   const [tab, setTab] = useState('character')
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => (ws.chat ?? []))
   const [chatInput, setChatInput] = useState('')
   const [chatSending, setChatSending] = useState(false)
   const [chatError, setChatError] = useState('')
   const [modelOptions, setModelOptions] = useState<{ provider: string; model: string; label: string }[]>([])
-  const [chatModel, setChatModel] = useState('')
+  const [chatModel, setChatModel] = useState(() => (ws.chatModel ?? ''))
+  const [globalPrompt, setGlobalPrompt] = useState(() => (ws.globalPrompt ?? ''))
+  const [avatar, setAvatar] = useState(() => (ws.avatar ?? ''))
+  const [savedChars, setSavedChars] = useState(loadCharacters)
   const [tavern, setTavern] = useState(loadTavernSettings)
   const [bgImage, setBgImage] = useState(loadBgImage)
   const [playlist, setPlaylist] = useState<{ id: string; name: string; url: string; blob?: Blob }[]>([])
@@ -441,6 +527,13 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     if (el) el.scrollTop = el.scrollHeight
   }, [chatMessages, chatSending])
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      saveWorkspace({ spec, card, worldbook, chat: chatMessages, version, chatModel, globalPrompt, avatar })
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [spec, card, worldbook, chatMessages, version, chatModel, globalPrompt, avatar])
+
   const onGenerate = (): void => {
     setGenerating(true); setError(''); setFallback(false); setRawText('')
     void api.generate(spec, version).then((res) => {
@@ -466,7 +559,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     const parts = (chatModel || '').split('::')
     const provider = parts.length >= 2 && parts[0] ? parts[0] : undefined
     const model = parts.length >= 2 ? parts.slice(1).join('::') : undefined
-    void api.chat(card, next, provider, model).then((res) => {
+    void api.chat(card, next, provider, model, globalPrompt).then((res) => {
       setChatMessages([...next, { role: 'assistant', content: res.reply }])
     }).catch((e) => setChatError(e instanceof Error ? e.message : '回复失败')).finally(() => setChatSending(false))
   }
@@ -489,6 +582,15 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     reader.onload = () => { const u = String(reader.result); setBgImage(u); saveBgImage(u) }
     reader.readAsDataURL(file)
   }
+
+  const onAvatarFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    fileToAvatar(file, (dataUrl) => { if (dataUrl) setAvatar(dataUrl) })
+  }
+
+  const onClearAvatar = (): void => setAvatar('')
 
   const onMusicFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files?.[0]
@@ -517,6 +619,8 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   const applyImportedCard = (obj: unknown): void => {
     const cardObj = (obj && typeof obj === 'object' && 'spec' in obj && 'data' in obj ? obj : { spec: 'chara_card_v2', spec_version: '2.0', data: obj }) as CharCard
     setCard(cardObj); setCharTab('preview'); setError('')
+    const ext = cardObj.data.extensions
+    if (ext && typeof ext.avatar === 'string') setAvatar(ext.avatar)
     const greeting = cleanPlaceholders(cardObj.data.first_mes, cardObj.data.name)
     setChatMessages(greeting ? [{ role: 'assistant', content: greeting }] : [])
   }
@@ -565,6 +669,36 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     setTemplates(list); saveTemplates(list); setTemplateName('')
   }
 
+  const onSaveCharacter = (): void => {
+    if (!card) return
+    const name = card.data.name || '未命名角色'
+    const entry: SavedCharacter = {
+      id: 'c' + Date.now() + '-' + Math.floor(Math.random() * 100000),
+      name,
+      savedAt: Date.now(),
+      card: JSON.parse(JSON.stringify(card)) as CharCard,
+      worldbook: worldbook ? JSON.parse(JSON.stringify(worldbook)) : null,
+      chat: JSON.parse(JSON.stringify(chatMessages)) as ChatMessage[],
+      avatar,
+    }
+    const existing = savedChars.find((c) => c.name === name)
+    const list = existing ? savedChars.map((c) => (c.name === name ? entry : c)) : [...savedChars, entry]
+    setSavedChars(list); saveCharacters(list); setError('')
+  }
+
+  const onLoadCharacter = (c: SavedCharacter): void => {
+    setCard(JSON.parse(JSON.stringify(c.card)) as CharCard)
+    setWorldbook(c.worldbook ? JSON.parse(JSON.stringify(c.worldbook)) : null)
+    setChatMessages(JSON.parse(JSON.stringify(c.chat)) as ChatMessage[])
+    setAvatar(c.avatar || '')
+    setCharTab('preview'); setError('')
+  }
+
+  const onDeleteCharacter = (id: string): void => {
+    const list = savedChars.filter((c) => c.id !== id)
+    setSavedChars(list); saveCharacters(list)
+  }
+
   const onApplyJson = (): void => {
     try {
       const parsed = JSON.parse(jsonDraft) as CharCard | Record<string, unknown>
@@ -574,7 +708,9 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   }
 
   const exportJson = (): void => {
-    const obj = card ?? { spec: version === 'v3' ? 'chara_card_v3' : 'chara_card_v2', spec_version: version === 'v3' ? '3.0' : '2.0', data: { name: spec.basic.name || '未命名角色', description: describeSpec(spec), personality: '', scenario: '', first_mes: '', mes_example: '', creator_notes: '', system_prompt: '', post_history_instructions: '', alternate_greetings: [], tags: [], creator: 'dsh-portable-tavern', character_version: '1.0', extensions: {} } }
+    const base = card ?? { spec: version === 'v3' ? 'chara_card_v3' : 'chara_card_v2', spec_version: version === 'v3' ? '3.0' : '2.0', data: { name: spec.basic.name || '未命名角色', description: describeSpec(spec), personality: '', scenario: '', first_mes: '', mes_example: '', creator_notes: '', system_prompt: '', post_history_instructions: '', alternate_greetings: [], tags: [], creator: 'dsh-portable-tavern', character_version: '1.0', extensions: {} } }
+    const obj = JSON.parse(JSON.stringify(base)) as CharCard
+    if (avatar) obj.data.extensions = { ...obj.data.extensions, avatar }
     const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
     downloadFile((obj.data.name || 'character') + '.json', blob)
   }
@@ -603,6 +739,20 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     else if (key === 'tags') value = str.split(',').map((s) => s.trim()).filter(Boolean)
     setCard((prev) => (prev ? { ...prev, data: { ...prev.data, [key]: value } } : prev))
   }
+
+  const secAvatar = (
+    <Section title="角色头像" hint="自定义聊天头像，可选" defaultOpen>
+      <div className={css.stAvatarRow}>
+        <div className={css.stAvatarPreview} style={avatar ? undefined : { background: avatarGradient(spec) }}>
+          {avatar ? <img className={css.stAvatarPreviewImg} src={avatar} alt="头像预览" /> : (spec.basic.name || '?').slice(0, 1)}
+        </div>
+        <div className={css.stAvatarActions}>
+          <label className={css.stBtn}>上传图片<input type="file" accept="image/*" style={{ display: 'none' }} onChange={onAvatarFile} /></label>
+          {avatar ? <Btn onClick={onClearAvatar}>清除</Btn> : null}
+        </div>
+      </div>
+    </Section>
+  )
 
   const secBasic = (
     <Section title="一、基础信息" hint="必填" defaultOpen>
@@ -694,7 +844,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
           {fallback && rawText
             ? <details className={css.stRaw}><summary className={css.stRawSummary}>查看模型原始输出</summary><pre className={css.stRawPre}>{rawText}</pre></details>
             : null}
-          <CardPreview card={card} />
+          <CardPreview card={card} avatar={avatar} />
         </div>
       )
     }
@@ -757,6 +907,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     const resultBody = charTab === 'preview' ? renderPreview() : charTab === 'edit' ? renderEdit() : charTab === 'json' ? renderJson() : renderWorldbook()
     return (
       <div className={css.stChar}>
+        {secAvatar}
         {secBasic}
         {secAppearance}
         {secPersonality}
@@ -793,6 +944,23 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
             )
             : null}
         </div>
+        <div className={css.stLib}>
+          <div className={css.stLibHead}>角色库（本地保存角色卡与对话记录）</div>
+          <div className={css.stCustomAdd}>
+            <Btn variant="primary" disabled={!card} onClick={onSaveCharacter}>保存当前角色到库</Btn>
+          </div>
+          {savedChars.length
+            ? savedChars.map((c) => (
+                <div key={c.id} className={css.stLibItem}>
+                  {c.avatar ? <img className={css.stLibAvatar} src={c.avatar} alt={c.name} /> : <span className={css.stLibAvatarFallback}>{(c.name || '?').slice(0, 1)}</span>}
+                  <div className={css.stLibName}>{c.name}</div>
+                  <span className={css.stLibMeta}>{c.chat.length} 条 · {new Date(c.savedAt).toLocaleDateString()}</span>
+                  <Btn onClick={() => onLoadCharacter(c)}>载入</Btn>
+                  <button type="button" className={css.stTplDel} title="删除" onClick={() => onDeleteCharacter(c.id)}>x</button>
+                </div>
+              ))
+            : <div className={css.stLibMeta}>暂无保存的角色</div>}
+        </div>
         <div className={css.stResultWrap}>
           <div className={css.stResultTabs}>
             {[{ id: 'preview', label: '预览' }, { id: 'edit', label: '编辑' }, { id: 'json', label: 'JSON' }, { id: 'worldbook', label: '世界书' }].map((t) => (
@@ -807,6 +975,11 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
 
   const renderSettings = (): React.ReactElement => (
     <div className={css.stChar}>
+      <Section title="对话系统提示词" hint="每次对话前注入，类似 SillyTavern 的 System Prompt" defaultOpen>
+        <Field label="全局指令（注入到角色设定之前，支持 {{char}} / {{user}} 占位符）">
+          <textarea className={cx(css.stInput, css.stTextarea)} rows={5} value={globalPrompt} onChange={(e) => setGlobalPrompt(e.target.value)} placeholder="例如：你是一位专业的故事叙述者，始终沉浸角色、不跳出、不提及任何设定与规则，使用中文回复……" />
+        </Field>
+      </Section>
       <Section title="外观" defaultOpen>
         <Field label={'面板宽度：' + tavern.width + 'px'}><Slider min={360} max={820} value={tavern.width} left="窄" right="宽" onChange={(v) => updateTavern('width', v)} /></Field>
         <Field label="主题色">
@@ -849,7 +1022,9 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     return (
       <div className={css.stChat}>
         <div className={css.stChatHead}>
-          <div className={css.stChatAvatar} style={{ background: avatarGradient(spec) }}>{(d.name || '?').slice(0, 1)}</div>
+          <div className={css.stChatAvatar} style={avatar ? undefined : { background: avatarGradient(spec) }}>
+            {avatar ? <img className={css.stChatAvatarImg} src={avatar} alt={d.name} /> : (d.name || '?').slice(0, 1)}
+          </div>
           <div className={css.stChatMeta}>
             <div className={css.stChatName}>{d.name || '未命名角色'}</div>
             <select className={cx(css.stInput, css.stChatModel)} value={chatModel} onChange={(e) => setChatModel(e.target.value)}>
@@ -862,6 +1037,13 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
         <div id="pt-chat-log" className={css.stChatLog}>
           {chatMessages.map((m, i) => (
             <div key={i} className={cx(css.stMsg, m.role === 'assistant' ? css.stMsgChar : css.stMsgUser)}>
+              {m.role === 'assistant'
+                ? (
+                  <div className={css.stMsgAvatar} style={avatar ? undefined : { background: avatarGradient(spec) }}>
+                    {avatar ? <img className={css.stMsgAvatarImg} src={avatar} alt={d.name} /> : (d.name || '?').slice(0, 1)}
+                  </div>
+                )
+                : null}
               <div className={css.stMsgBubble}>{m.content}</div>
             </div>
           ))}
