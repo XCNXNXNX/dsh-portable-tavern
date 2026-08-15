@@ -15,6 +15,19 @@ DSH Web GUI 的「便携酒馆」插件：RPG 式 SillyTavern V2/V3 角色卡生
 
 独立插件，仅依赖官方 `@deepseek-ai/*` SDK。
 
+## 安装
+
+```bash
+# npm
+dsh plugin --profile web add dsh-portable-tavern
+
+# GitHub（lib/ 已提交，无需构建授权）
+dsh plugin --profile web add github:XCNXNXNX/dsh-portable-tavern
+
+# Release tarball
+dsh plugin --profile web add https://github.com/XCNXNXNX/dsh-portable-tavern/releases/download/v0.1.0/dsh-portable-tavern-0.1.0.tgz
+```
+
 ## 架构
 
 标准双面 DSH 插件：Node 半（`src/index.ts`）通过 `webServer` 注册 `/api/dsh-portable-tavern` 路由，
