@@ -13,12 +13,26 @@ import {
   type ApiErrorBody,
   type CharCard,
   type ChatMessage,
+  type LlmCustom,
   type TavernSpec,
 } from './protocol.ts'
-import { chatReply, generateCard, generateWorldbook, listModels } from './llm.ts'
+import { chatReply, generateCard, generateWorldbook, listModels, testCustom } from './llm.ts'
 
 /** Cap on JSON request bodies (specs and chat histories are small). */
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024
+
+/** Extract a sanitized custom-endpoint config from a request body, if any. */
+function readCustom(body: Record<string, unknown> | undefined): LlmCustom | undefined {
+  const raw = body?.custom
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const record = raw as Record<string, unknown>
+  const baseUrl = typeof record.baseUrl === 'string' ? record.baseUrl.trim() : ''
+  const apiKey = typeof record.apiKey === 'string' ? record.apiKey.trim() : ''
+  const model = typeof record.model === 'string' ? record.model.trim() : ''
+  if (baseUrl === '' || apiKey === '' || model === '') return undefined
+  if (baseUrl.length > 2000 || apiKey.length > 500 || model.length > 200) return undefined
+  return { baseUrl, apiKey, model }
+}
 
 /** Loopback literal check plus browser same-origin markers. */
 function isLoopbackRequest(request: IncomingMessage): boolean {
@@ -97,7 +111,7 @@ export function makeRoutes(ctx: Context): WebRoute[] {
         const spec = (body.spec ?? {}) as TavernSpec
         const version = body.version === 'v3' ? 'v3' : 'v2'
         try {
-          const { card, rawText, fallback } = await generateCard(ctx, spec, version)
+          const { card, rawText, fallback } = await generateCard(ctx, spec, version, readCustom(body))
           writeJson(res, 200, { card, rawText, fallback })
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))
@@ -117,7 +131,7 @@ export function makeRoutes(ctx: Context): WebRoute[] {
         const spec = (body.spec ?? {}) as TavernSpec
         const card = (body.card ?? null) as CharCard | null
         try {
-          const { entries, rawText } = await generateWorldbook(ctx, spec, card)
+          const { entries, rawText } = await generateWorldbook(ctx, spec, card, readCustom(body))
           writeJson(res, 200, { entries, rawText })
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))
@@ -153,8 +167,27 @@ export function makeRoutes(ctx: Context): WebRoute[] {
         const model = typeof body.model === 'string' ? body.model : undefined
         const globalPrompt = typeof body.globalPrompt === 'string' ? body.globalPrompt : undefined
         try {
-          const reply = await chatReply(ctx, card, messages, provider, model, globalPrompt)
+          const reply = await chatReply(ctx, card, messages, provider, model, globalPrompt, readCustom(body))
           writeJson(res, 200, { reply })
+        } catch (error) {
+          writeError(res, 500, error instanceof Error ? error.message : String(error))
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: TAVERN_API.test,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const custom = readCustom(body)
+        if (custom === undefined) {
+          writeError(res, 400, '自定义接口未填写完整（地址 / API Key / 模型）')
+          return
+        }
+        try {
+          const result = await testCustom(custom)
+          writeJson(res, 200, result)
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))
         }

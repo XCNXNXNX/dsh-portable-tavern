@@ -13,4 +13,13 @@ export declare class TavernApi {
     worldbook(spec: TavernSpec, card: CharCard | null): Promise<WorldbookResponse>;
     models(): Promise<ModelsResponse>;
     chat(card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string): Promise<ChatResponse>;
+    test(custom: {
+        baseUrl: string;
+        apiKey: string;
+        model: string;
+    }): Promise<{
+        ok: true;
+        latencyMs: number;
+        reply: string;
+    }>;
 }

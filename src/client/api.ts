@@ -13,6 +13,7 @@ import {
   type TavernSpec,
   type WorldbookResponse,
 } from '../protocol.ts'
+import { customLlmPayload } from './llm-custom.ts'
 
 /** Error carrying the route's JSON error message. */
 export class TavernApiError extends Error {
@@ -51,11 +52,11 @@ async function post<T>(path: string, payload: unknown): Promise<T> {
 /** The browser half's only data entry point. */
 export class TavernApi {
   async generate(spec: TavernSpec, version: string): Promise<GenerateResponse> {
-    return post<GenerateResponse>(TAVERN_API.generate, { spec, version })
+    return post<GenerateResponse>(TAVERN_API.generate, { spec, version, custom: customLlmPayload() })
   }
 
   async worldbook(spec: TavernSpec, card: CharCard | null): Promise<WorldbookResponse> {
-    return post<WorldbookResponse>(TAVERN_API.worldbook, { spec, card })
+    return post<WorldbookResponse>(TAVERN_API.worldbook, { spec, card, custom: customLlmPayload() })
   }
 
   async models(): Promise<ModelsResponse> {
@@ -64,6 +65,20 @@ export class TavernApi {
   }
 
   async chat(card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string): Promise<ChatResponse> {
-    return post<ChatResponse>(TAVERN_API.chat, { card, messages, provider, model, globalPrompt })
+    // The custom endpoint only takes over when the chat is on it (provider
+    // 'custom'/unset) — a selected dsh provider always wins.
+    const useCustom = provider === undefined || provider === '' || provider === 'custom'
+    return post<ChatResponse>(TAVERN_API.chat, {
+      card,
+      messages,
+      provider: useCustom ? undefined : provider,
+      model: useCustom ? undefined : model,
+      globalPrompt,
+      custom: useCustom ? customLlmPayload() : undefined,
+    })
+  }
+
+  async test(custom: { baseUrl: string; apiKey: string; model: string }): Promise<{ ok: true; latencyMs: number; reply: string }> {
+    return post<{ ok: true; latencyMs: number; reply: string }>(TAVERN_API.test, { custom })
   }
 }

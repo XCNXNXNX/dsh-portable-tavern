@@ -5,9 +5,33 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { GenerateOptions, ReasoningEffortId } from '@deepseek-ai/dsh-llm';
-import type { CharCard, ChatMessage, TavernSpec } from './protocol.ts';
+import type { CharCard, ChatMessage, LlmCustom, TavernSpec } from './protocol.ts';
 /** Stable generation prompt used by generate/worldbook. */
 export declare const SYSTEM = "\u4F60\u662F\u4E00\u4F4D\u4E13\u4E1A\u7684 SillyTavern \u89D2\u8272\u5361\u64B0\u5199\u4E13\u5BB6\uFF0C\u64C5\u957F\u5851\u9020\u9C9C\u6D3B\u3001\u7ACB\u4F53\u3001\u6709\u8BB0\u5FC6\u70B9\u7684\u89D2\u8272\u3002\u4F60\u4E25\u683C\u9075\u5FAA\u7528\u6237\u7684\u8F93\u51FA\u8981\u6C42\uFF0C\u901A\u8FC7\u8C03\u7528\u5DE5\u5177\u6216\u8F93\u51FA JSON \u8FD4\u56DE\u7ED3\u679C\u3002";
+/** A custom-endpoint completion result in the same shape the routes consume. */
+export interface CompletionResult {
+    text: string;
+    toolCalls: {
+        name: string;
+        arguments: string;
+    }[];
+}
+/**
+ * One OpenAI-compatible chat completion against the user's own endpoint.
+ * The API key lives only in the Authorization header of this one request;
+ * errors are redacted so the key can never leak into logs or the UI.
+ */
+export declare function customComplete(custom: LlmCustom, options: {
+    system?: string;
+    messages: {
+        role: 'user' | 'assistant';
+        content: string;
+    }[];
+    temperature?: number;
+    maxTokens?: number;
+}): Promise<CompletionResult>;
+/** True when the custom endpoint is fully configured. */
+export declare function customReady(custom: LlmCustom | undefined | null): custom is LlmCustom;
 /** Tool schema the generate route offers so the model returns structured card data. */
 export declare const CARD_TOOL: {
     name: string;
@@ -93,13 +117,13 @@ export declare function parseResult(result: {
     }[];
 }): Record<string, unknown> | null;
 /** Generate the card data, retrying once with a stricter plain-JSON prompt on failure. */
-export declare function generateCard(ctx: Context, spec: TavernSpec, version: string): Promise<{
+export declare function generateCard(ctx: Context, spec: TavernSpec, version: string, custom?: LlmCustom): Promise<{
     card: CharCard;
     rawText: string;
     fallback: boolean;
 }>;
 /** Generate world-book entries from the spec or an existing card. */
-export declare function generateWorldbook(ctx: Context, spec: TavernSpec, card: CharCard | null): Promise<{
+export declare function generateWorldbook(ctx: Context, spec: TavernSpec, card: CharCard | null, custom?: LlmCustom): Promise<{
     entries: unknown[];
     rawText: string;
 }>;
@@ -116,4 +140,10 @@ export declare function listModels(ctx: Context): Promise<{
     } | null;
 }>;
 /** Produce the character's reply for one chat turn. */
-export declare function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string): Promise<string>;
+export declare function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string, custom?: LlmCustom): Promise<string>;
+/** Round-trip test of a user-supplied endpoint (settings 「测试连接」). */
+export declare function testCustom(custom: LlmCustom): Promise<{
+    ok: true;
+    latencyMs: number;
+    reply: string;
+}>;

@@ -10,7 +10,19 @@ export declare const TAVERN_API: {
     readonly worldbook: string;
     readonly models: string;
     readonly chat: string;
+    readonly test: string;
 };
+/**
+ * User-supplied OpenAI-compatible endpoint. Sent per-request from the browser
+ * (localStorage), never persisted host-side and never logged; the host only
+ * uses it for the upstream call.
+ */
+export interface LlmCustom {
+    /** Base URL, e.g. https://api.deepseek.com (no /chat/completions suffix). */
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+}
 /** JSON error body used by every route. */
 export interface ApiErrorBody {
     error: string;

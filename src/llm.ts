@@ -6,10 +6,95 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { GenerateOptions, StreamChunk, LlmRuntime, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { CharCard, ChatMessage, TavernSpec } from './protocol.ts'
+import type { CharCard, ChatMessage, LlmCustom, TavernSpec } from './protocol.ts'
 
 /** Stable generation prompt used by generate/worldbook. */
 export const SYSTEM = '你是一位专业的 SillyTavern 角色卡撰写专家，擅长塑造鲜活、立体、有记忆点的角色。你严格遵循用户的输出要求，通过调用工具或输出 JSON 返回结果。'
+
+// ---------------------------------------------------------------------------
+// user-supplied OpenAI-compatible endpoint (custom API key path)
+// ---------------------------------------------------------------------------
+
+/** A custom-endpoint completion result in the same shape the routes consume. */
+export interface CompletionResult {
+  text: string
+  toolCalls: { name: string; arguments: string }[]
+}
+
+/** Normalize a base URL and return the chat-completions endpoint. */
+function completionsUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '').replace(/\/chat\/completions$/i, '')
+  return trimmed + '/chat/completions'
+}
+
+/**
+ * One OpenAI-compatible chat completion against the user's own endpoint.
+ * The API key lives only in the Authorization header of this one request;
+ * errors are redacted so the key can never leak into logs or the UI.
+ */
+export async function customComplete(custom: LlmCustom, options: {
+  system?: string
+  messages: { role: 'user' | 'assistant'; content: string }[]
+  temperature?: number
+  maxTokens?: number
+}): Promise<CompletionResult> {
+  const url = completionsUrl(custom.baseUrl)
+  let parsedUrl: URL
+  try { parsedUrl = new URL(url) } catch { throw new Error('自定义接口地址无效') }
+  if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+    throw new Error('自定义接口地址必须是 http(s):// 开头')
+  }
+  const body = {
+    model: custom.model,
+    messages: [
+      ...(options.system ? [{ role: 'system', content: options.system }] : []),
+      ...options.messages.map(m => ({ role: m.role, content: m.content })),
+    ],
+    temperature: options.temperature ?? 0.8,
+    max_tokens: options.maxTokens ?? 1600,
+    stream: false,
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 180_000)
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${custom.apiKey}` },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } catch (error) {
+    const reason = error instanceof Error && error.name === 'AbortError' ? '请求超时' : '网络错误或接口不可达'
+    throw new Error('自定义模型调用失败：' + reason)
+  } finally {
+    clearTimeout(timer)
+  }
+  if (!response.ok) {
+    // Redact: never echo the request body (it contains no key, but stay strict)
+    // and cap the upstream text so a chatty gateway can't spam the UI.
+    let detail = ''
+    try {
+      const errBody = await response.text()
+      detail = errBody.slice(0, 300)
+    } catch { /* ignore */ }
+    throw new Error(`自定义模型返回 HTTP ${response.status}${detail ? '：' + detail : ''}`)
+  }
+  const data = (await response.json()) as {
+    choices?: { message?: { content?: string } }[]
+  }
+  const text = (data.choices?.[0]?.message?.content ?? '').trim()
+  if (text === '') throw new Error('自定义模型返回了空回复')
+  return { text, toolCalls: [] }
+}
+
+/** True when the custom endpoint is fully configured. */
+export function customReady(custom: LlmCustom | undefined | null): custom is LlmCustom {
+  return custom !== undefined && custom !== null
+    && typeof custom.baseUrl === 'string' && custom.baseUrl.trim() !== ''
+    && typeof custom.apiKey === 'string' && custom.apiKey.trim() !== ''
+    && typeof custom.model === 'string' && custom.model.trim() !== ''
+}
 
 /** Tool schema the generate route offers so the model returns structured card data. */
 export const CARD_TOOL = {
@@ -311,10 +396,22 @@ function fallbackData(spec: TavernSpec): Record<string, unknown> {
 }
 
 /** Generate the card data, retrying once with a stricter plain-JSON prompt on failure. */
-export async function generateCard(ctx: Context, spec: TavernSpec, version: string): Promise<{ card: CharCard; rawText: string; fallback: boolean }> {
-  const route = await resolveRoute(ctx)
+export async function generateCard(ctx: Context, spec: TavernSpec, version: string, custom?: LlmCustom): Promise<{ card: CharCard; rawText: string; fallback: boolean }> {
   const prompt = buildPrompt(spec)
-  let result = await streamCompletion(ctx, {
+  let result: CompletionResult
+  if (customReady(custom)) {
+    // Custom endpoint: plain-JSON contract (buildPrompt already instructs it).
+    result = await customComplete(custom, { system: SYSTEM, messages: [{ role: 'user', content: prompt }], temperature: 0.85, maxTokens: 3200 })
+    let data = parseResult(result)
+    if (data === null) {
+      const retryPrompt = prompt + '\n\n【再次强调】请只输出一个合法的 JSON 对象本身，不要任何解释、不要 Markdown 代码块；字符串里的换行必须用 \\n 转义。'
+      result = await customComplete(custom, { system: SYSTEM, messages: [{ role: 'user', content: retryPrompt }], temperature: 0.3, maxTokens: 3200 })
+      data = parseResult(result)
+    }
+    return { card: wrapCard(data, version, spec), rawText: result.text, fallback: data === null }
+  }
+  const route = await resolveRoute(ctx)
+  result = await streamCompletion(ctx, {
     provider: route.provider,
     model: route.model,
     reasoningEffort: route.reasoningEffort,
@@ -343,21 +440,26 @@ export async function generateCard(ctx: Context, spec: TavernSpec, version: stri
 }
 
 /** Generate world-book entries from the spec or an existing card. */
-export async function generateWorldbook(ctx: Context, spec: TavernSpec, card: CharCard | null): Promise<{ entries: unknown[]; rawText: string }> {
-  const route = await resolveRoute(ctx)
+export async function generateWorldbook(ctx: Context, spec: TavernSpec, card: CharCard | null, custom?: LlmCustom): Promise<{ entries: unknown[]; rawText: string }> {
   const prompt = buildWorldbookPrompt(spec, card)
-  const result = await streamCompletion(ctx, {
-    provider: route.provider,
-    model: route.model,
-    reasoningEffort: route.reasoningEffort,
-    messages: [mkMessage('user', prompt)],
-    system: SYSTEM,
-    temperature: 0.7,
-    maxTokens: 2200,
-  })
-  const parsed = (extractJson(result.text) ?? repairJson(result.text)) as { entries?: unknown } | null
+  let text: string
+  if (customReady(custom)) {
+    text = (await customComplete(custom, { system: SYSTEM, messages: [{ role: 'user', content: prompt }], temperature: 0.7, maxTokens: 2200 })).text
+  } else {
+    const route = await resolveRoute(ctx)
+    text = await streamText(ctx, {
+      provider: route.provider,
+      model: route.model,
+      reasoningEffort: route.reasoningEffort,
+      messages: [mkMessage('user', prompt)],
+      system: SYSTEM,
+      temperature: 0.7,
+      maxTokens: 2200,
+    })
+  }
+  const parsed = (extractJson(text) ?? repairJson(text)) as { entries?: unknown } | null
   const entries = parsed && Array.isArray(parsed.entries) ? parsed.entries : []
-  return { entries, rawText: result.text }
+  return { entries, rawText: text }
 }
 
 /** List available models plus the current default route. */
@@ -386,11 +488,19 @@ export async function listModels(ctx: Context): Promise<{ options: { provider: s
 }
 
 /** Produce the character's reply for one chat turn. */
-export async function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string): Promise<string> {
+export async function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string, custom?: LlmCustom): Promise<string> {
+  const system = buildChatSystem(card, globalPrompt)
+  if (customReady(custom) && (provider === undefined || provider === '' || provider === 'custom')) {
+    return (await customComplete(custom, {
+      system,
+      messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' as const : 'user' as const, content: m.content })),
+      temperature: 0.9,
+      maxTokens: 600,
+    })).text
+  }
   const route = await resolveRoute(ctx)
   const p = provider && model ? provider : route.provider
   const m = provider && model ? model : route.model
-  const system = buildChatSystem(card, globalPrompt)
   const modelMessages = messages.map((msg) => mkMessage(msg.role === 'assistant' ? 'assistant' : 'user', msg.content, p, m))
   return streamText(ctx, {
     provider: p,
@@ -401,4 +511,15 @@ export async function chatReply(ctx: Context, card: CharCard, messages: ChatMess
     temperature: 0.9,
     maxTokens: 600,
   })
+}
+
+/** Round-trip test of a user-supplied endpoint (settings 「测试连接」). */
+export async function testCustom(custom: LlmCustom): Promise<{ ok: true; latencyMs: number; reply: string }> {
+  const started = Date.now()
+  const result = await customComplete(custom, {
+    messages: [{ role: 'user', content: '请只回复两个字：连接成功' }],
+    temperature: 0,
+    maxTokens: 20,
+  })
+  return { ok: true, latencyMs: Date.now() - started, reply: result.text.slice(0, 100) }
 }

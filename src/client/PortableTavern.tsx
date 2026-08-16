@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import type * as React from 'react'
 import type { ChatMessage, CharCard, TavernSpec, WorldbookEntry } from '../protocol.ts'
 import { TavernApi } from './api.ts'
+import { loadCustomLlm, saveCustomLlm, clearCustomLlm } from './llm-custom.ts'
 import { css } from './styles.ts'
 
 // ---------------------------------------------------------------------------
@@ -87,15 +88,26 @@ function useStoreValue(store: TavernStore): boolean {
 // persistence (localStorage + IndexedDB)
 // ---------------------------------------------------------------------------
 
-function loadTavernSettings(): { width: number; accent: string } {
+function loadTavernSettings(): { width: number; accent: string; showTrigger: boolean } {
   try {
     const raw = localStorage.getItem('dsh.portable-tavern.settings.v1')
     const s = raw ? JSON.parse(raw) : {}
-    return { width: s.width || 540, accent: s.accent || '#4f7cff' }
-  } catch { return { width: 540, accent: '#4f7cff' } }
+    return { width: s.width || 540, accent: s.accent || '#4f7cff', showTrigger: s.showTrigger !== false }
+  } catch { return { width: 540, accent: '#4f7cff', showTrigger: true } }
 }
-function saveTavernSettings(s: { width: number; accent: string }): void {
+function saveTavernSettings(s: { width: number; accent: string; showTrigger?: boolean }): void {
   try { localStorage.setItem('dsh.portable-tavern.settings.v1', JSON.stringify(s)) } catch { /* quota */ }
+}
+
+/**
+ * Floating-trigger visibility, shared between TavernRoot (renders it) and the
+ * settings tab (toggles it); persists through the tavern settings key.
+ */
+const triggerStore: TavernStore = makeStore(loadTavernSettings().showTrigger)
+function setTriggerVisible(value: boolean): void {
+  triggerStore.set(value)
+  const s = loadTavernSettings()
+  saveTavernSettings({ ...s, showTrigger: value })
 }
 function loadBgImage(): string {
   try { return localStorage.getItem('dsh.portable-tavern.bgimage.v1') || '' } catch { return '' }
@@ -498,6 +510,10 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   const [avatar, setAvatar] = useState(() => (ws.avatar ?? ''))
   const [savedChars, setSavedChars] = useState(loadCharacters)
   const [tavern, setTavern] = useState(loadTavernSettings)
+  const [showTrigger, setShowTrigger] = useState(() => triggerStore.get())
+  const [llmDraft, setLlmDraft] = useState(loadCustomLlm)
+  const [llmTesting, setLlmTesting] = useState(false)
+  const [llmTestResult, setLlmTestResult] = useState('')
   const [bgImage, setBgImage] = useState(loadBgImage)
   const [playlist, setPlaylist] = useState<{ id: string; name: string; url: string; blob?: Blob }[]>([])
   const [currentIndex, setCurrentIndex] = useState(-1)
@@ -557,8 +573,9 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     const next = [...chatMessages, { role: 'user' as const, content: text }]
     setChatMessages(next); setChatInput(''); setChatSending(true); setChatError('')
     const parts = (chatModel || '').split('::')
-    const provider = parts.length >= 2 && parts[0] ? parts[0] : undefined
-    const model = parts.length >= 2 ? parts.slice(1).join('::') : undefined
+    const isCustom = parts[0] === 'custom'
+    const provider = isCustom ? 'custom' : parts.length >= 2 && parts[0] ? parts[0] : undefined
+    const model = isCustom ? llmDraft.model : parts.length >= 2 ? parts.slice(1).join('::') : undefined
     void api.chat(card, next, provider, model, globalPrompt).then((res) => {
       setChatMessages([...next, { role: 'assistant', content: res.reply }])
     }).catch((e) => setChatError(e instanceof Error ? e.message : '回复失败')).finally(() => setChatSending(false))
@@ -572,6 +589,30 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
 
   const updateTavern = (key: 'width' | 'accent', value: number | string): void => {
     setTavern((prev) => { const n = { ...prev, [key]: value }; saveTavernSettings(n); return n })
+  }
+
+  const onToggleTrigger = (value: boolean): void => {
+    setShowTrigger(value)
+    setTriggerVisible(value)
+  }
+
+  const onTestLlm = (): void => {
+    const baseUrl = llmDraft.baseUrl.trim()
+    const apiKey = llmDraft.apiKey.trim()
+    const model = llmDraft.model.trim()
+    if (baseUrl === '' || apiKey === '' || model === '') { setLlmTestResult('请先填写完整：接口地址 / API Key / 模型名称'); return }
+    setLlmTesting(true); setLlmTestResult('')
+    saveCustomLlm({ baseUrl, apiKey, model })
+    setLlmDraft(loadCustomLlm())
+    void api.test({ baseUrl, apiKey, model }).then((res) => {
+      setLlmTestResult('连接成功（' + res.latencyMs + 'ms）：' + res.reply)
+    }).catch((e) => setLlmTestResult('连接失败：' + (e instanceof Error ? e.message : String(e)))).finally(() => setLlmTesting(false))
+  }
+
+  const onClearLlm = (): void => {
+    clearCustomLlm()
+    setLlmDraft(loadCustomLlm())
+    setLlmTestResult('')
   }
 
   const onBgImageFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -982,6 +1023,12 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       </Section>
       <Section title="外观" defaultOpen>
         <Field label={'面板宽度：' + tavern.width + 'px'}><Slider min={360} max={820} value={tavern.width} left="窄" right="宽" onChange={(v) => updateTavern('width', v)} /></Field>
+        <Field label="悬浮按钮">
+          <label className={css.stCheck}>
+            <input type="checkbox" checked={showTrigger} onChange={(e) => onToggleTrigger(e.target.checked)} />
+            {showTrigger ? '显示（可拖动停靠）' : '隐藏（从 DSH 设置页打开酒馆）'}
+          </label>
+        </Field>
         <Field label="主题色">
           <div className={css.stSwatches}>
             <input type="color" value={tavern.accent} onChange={(e) => updateTavern('accent', e.target.value)} className={css.stColorInput} />
@@ -994,6 +1041,25 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
             {bgImage ? <Btn onClick={() => { setBgImage(''); saveBgImage('') }}>清除</Btn> : null}
           </div>
         </Field>
+      </Section>
+      <Section title="模型接入" hint="默认直接使用 DSH 当前配置的模型与密钥；填写后可改走你自己的 OpenAI 兼容接口">
+        <Field label="接口地址（Base URL，自动拼接 /chat/completions）">
+          <input className={css.stInput} value={llmDraft.baseUrl} onChange={(e) => setLlmDraft({ ...llmDraft, baseUrl: e.target.value })} placeholder="https://api.deepseek.com" />
+        </Field>
+        <Field label="API Key（仅保存在本浏览器，密码框遮蔽显示）">
+          <input className={css.stInput} type="password" value={llmDraft.apiKey} onChange={(e) => setLlmDraft({ ...llmDraft, apiKey: e.target.value })} placeholder="sk-…" autoComplete="off" />
+        </Field>
+        <Field label="模型名称">
+          <input className={css.stInput} value={llmDraft.model} onChange={(e) => setLlmDraft({ ...llmDraft, model: e.target.value })} placeholder="deepseek-chat" />
+        </Field>
+        <Field label={'当前状态：' + (llmDraft.configured ? '已启用自定义接口（角色卡 / 世界书 / 聊天可用）' : '未启用（使用 DSH 默认模型）')}>
+          <div className={cx(css.stRow, css.stGap)}>
+            <Btn variant="primary" disabled={llmTesting} onClick={onTestLlm}>{llmTesting ? '测试中…' : '保存并测试连接'}</Btn>
+            {llmDraft.configured ? <Btn onClick={onClearLlm}>清除配置</Btn> : null}
+          </div>
+        </Field>
+        {llmTestResult ? <div className={css.stNotice}>{llmTestResult}</div> : null}
+        <div className={css.stLabel}>API Key 只存在本机浏览器 localStorage，仅发送给本机酒馆路由转发请求，不写入任何日志；聊天页的模型下拉中选择「自定义」即可切换到该接口。</div>
       </Section>
       <Section title="本地音乐" defaultOpen>
         <Field label="本地音乐（支持文件夹、按顺序播放）">
@@ -1029,6 +1095,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
             <div className={css.stChatName}>{d.name || '未命名角色'}</div>
             <select className={cx(css.stInput, css.stChatModel)} value={chatModel} onChange={(e) => setChatModel(e.target.value)}>
               {modelOptions.length === 0 ? <option value="">加载模型…</option> : null}
+              {llmDraft.configured ? <option value="custom::">自定义 · {llmDraft.model}</option> : null}
               {modelOptions.map((o) => <option key={o.provider + '::' + o.model} value={o.provider + '::' + o.model}>{o.label}</option>)}
             </select>
           </div>
@@ -1098,6 +1165,7 @@ let dragged = false
 
 export function TavernRoot(props: { store: TavernStore }): React.ReactElement {
   const open = useStoreValue(props.store)
+  const showTrigger = useStoreValue(triggerStore)
   const [pos, setPos] = useState(() => {
     const vw = typeof window !== 'undefined' ? window.innerWidth : 1200
     const vh = typeof window !== 'undefined' ? window.innerHeight : 800
@@ -1135,7 +1203,7 @@ export function TavernRoot(props: { store: TavernStore }): React.ReactElement {
 
   return (
     <div className={css.stRoot}>
-      <div style={{ display: open ? 'none' : 'block' }}>{trigger}</div>
+      {showTrigger ? <div style={{ display: open ? 'none' : 'block' }}>{trigger}</div> : null}
       <PortableTavern store={props.store} open={open} />
     </div>
   )
