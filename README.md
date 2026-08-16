@@ -32,7 +32,7 @@ dsh plugin --profile web add dsh-portable-tavern
 dsh plugin --profile web add github:XCNXNXNX/dsh-portable-tavern
 
 # Release tarball
-dsh plugin --profile web add https://github.com/XCNXNXNX/dsh-portable-tavern/releases/download/v0.1.0/dsh-portable-tavern-0.1.0.tgz
+dsh plugin --profile web add https://github.com/XCNXNXNX/dsh-portable-tavern/releases/download/v0.2.0/dsh-portable-tavern-0.2.0.tgz
 ```
 
 ## 架构
