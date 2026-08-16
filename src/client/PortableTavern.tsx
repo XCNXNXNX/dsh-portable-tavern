@@ -522,6 +522,10 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   const patchN = <K extends keyof TavernSpec>(section: K, key: string, value: unknown): void =>
     setSpec((prev) => ({ ...prev, [section]: { ...(prev[section] as unknown as Record<string, unknown>), [key]: value } }))
 
+  // Derived live from the drafts — the stored `configured` flag only refreshes
+  // on save, which left the chat dropdown's custom option hidden while typing.
+  const customConfigured = llmDraft.baseUrl.trim() !== '' && llmDraft.apiKey.trim() !== '' && llmDraft.model.trim() !== ''
+
   useEffect(() => {
     void api.models().then((res) => {
       setModelOptions(res.options)
@@ -570,10 +574,15 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   const onSend = (): void => {
     const text = chatInput.trim()
     if (!text || chatSending || !card) return
-    const next = [...chatMessages, { role: 'user' as const, content: text }]
-    setChatMessages(next); setChatInput(''); setChatSending(true); setChatError('')
     const parts = (chatModel || '').split('::')
     const isCustom = parts[0] === 'custom'
+    if (isCustom && !customConfigured) {
+      setChatError('请先到「设置 → 模型接入」填写自定义接口（地址 / API Key / 模型）')
+      setTab('settings')
+      return
+    }
+    const next = [...chatMessages, { role: 'user' as const, content: text }]
+    setChatMessages(next); setChatInput(''); setChatSending(true); setChatError('')
     const provider = isCustom ? 'custom' : parts.length >= 2 && parts[0] ? parts[0] : undefined
     const model = isCustom ? llmDraft.model : parts.length >= 2 ? parts.slice(1).join('::') : undefined
     void api.chat(card, next, provider, model, globalPrompt).then((res) => {
@@ -1052,10 +1061,10 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
         <Field label="模型名称">
           <input className={css.stInput} value={llmDraft.model} onChange={(e) => setLlmDraft({ ...llmDraft, model: e.target.value })} placeholder="deepseek-chat" />
         </Field>
-        <Field label={'当前状态：' + (llmDraft.configured ? '已启用自定义接口（角色卡 / 世界书 / 聊天可用）' : '未启用（使用 DSH 默认模型）')}>
+        <Field label={'当前状态：' + (customConfigured ? '已启用自定义接口（角色卡 / 世界书 / 聊天可用）' : '未启用（使用 DSH 默认模型）')}>
           <div className={cx(css.stRow, css.stGap)}>
             <Btn variant="primary" disabled={llmTesting} onClick={onTestLlm}>{llmTesting ? '测试中…' : '保存并测试连接'}</Btn>
-            {llmDraft.configured ? <Btn onClick={onClearLlm}>清除配置</Btn> : null}
+            {customConfigured ? <Btn onClick={onClearLlm}>清除配置</Btn> : null}
           </div>
         </Field>
         {llmTestResult ? <div className={css.stNotice}>{llmTestResult}</div> : null}
@@ -1094,8 +1103,8 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
           <div className={css.stChatMeta}>
             <div className={css.stChatName}>{d.name || '未命名角色'}</div>
             <select className={cx(css.stInput, css.stChatModel)} value={chatModel} onChange={(e) => setChatModel(e.target.value)}>
+              <option value="custom::">{customConfigured ? '自定义 · ' + llmDraft.model : '自定义模型（未配置）'}</option>
               {modelOptions.length === 0 ? <option value="">加载模型…</option> : null}
-              {llmDraft.configured ? <option value="custom::">自定义 · {llmDraft.model}</option> : null}
               {modelOptions.map((o) => <option key={o.provider + '::' + o.model} value={o.provider + '::' + o.model}>{o.label}</option>)}
             </select>
           </div>
