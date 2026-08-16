@@ -1219,11 +1219,19 @@ export function TavernRoot(props: { store: TavernStore }): React.ReactElement {
 }
 
 export function SettingsEntry(props: { onOpen: () => void }): React.ReactElement {
+  const showTrigger = useStoreValue(triggerStore)
   return (
     <div className={css.stSettingsEntry}>
       <div className={css.stSettingsTitle}>便携酒馆</div>
       <p className={css.stSettingsDesc}>RPG 角色卡生成 + 酒馆聊天一体。通过可视化面板塑造角色，一键生成 SillyTavern 角色卡，并直接在右侧与角色对话。</p>
-      <button type="button" className={cx(css.stBtn, css.stBtnPrimary)} onClick={props.onOpen}>打开便携酒馆</button>
+      <div className={cx(css.stRow, css.stGap)}>
+        <button type="button" className={cx(css.stBtn, css.stBtnPrimary)} onClick={props.onOpen}>打开便携酒馆</button>
+        <label className={css.stCheck}>
+          <input type="checkbox" checked={showTrigger} onChange={(e) => setTriggerVisible(e.target.checked)} />
+          悬浮按钮
+        </label>
+      </div>
+      <span className={css.stSectionHint}>关闭悬浮按钮后，仍可从此页打开酒馆</span>
     </div>
   )
 }
