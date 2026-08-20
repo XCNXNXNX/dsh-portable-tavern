@@ -5,7 +5,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { GenerateOptions, StreamChunk, LlmRuntime, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, type GenerateOptions, type ReasoningEffortId as EffortId, type StreamChunk, type LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { CharCard, ChatMessage, LlmCustom, TavernSpec } from './protocol.ts'
 
 /** Stable generation prompt used by generate/worldbook. */
@@ -118,14 +118,62 @@ export const CARD_TOOL = {
   },
 }
 
-interface DefaultModelSelection { provider?: string; model?: string; reasoningEffort?: ReasoningEffortId }
+interface DefaultModelSelection { provider?: string; model?: string; reasoningEffort?: EffortId }
+
+// ---------------------------------------------------------------------------
+// reasoning-effort policy (post-rc.7 harness: the default model can be a
+// heavy-reasoning model such as deepseek-v4-pro with effort "max", which
+// spends the whole output budget on thinking and returns no visible text)
+// ---------------------------------------------------------------------------
+
+const effortCache = new Map<string, Promise<EffortId[]>>()
+
+/**
+ * Supported reasoning-effort ids for one provider/model route, cached per
+ * route. Empty when the route is unknown or advertises no effort levels
+ * (a thinking-disabled model).
+ */
+function supportedEfforts(ctx: Context, provider: string, model: string): Promise<EffortId[]> {
+  const key = provider + '\u0000' + model
+  let cached = effortCache.get(key)
+  if (cached === undefined) {
+    cached = (async () => {
+      try {
+        const info = await ctx.llm.resolveModelInfo(provider, model)
+        const efforts = info.reasoning?.efforts ?? []
+        return efforts.map((effort) => effort.id)
+      } catch {
+        return []
+      }
+    })()
+    effortCache.set(key, cached)
+  }
+  return cached
+}
+
+/**
+ * Pick a safe reasoning effort for a structured-generation call. The harness
+ * default selection can carry `max` — handing that to a card/worldbook call
+ * makes the model think away the whole max-token budget and return nothing.
+ * Policy: never above `high`; drop entirely when the route does not support
+ * it (thinking-disabled models reject any effort on the wire).
+ */
+export async function resolveEffort(ctx: Context, provider: string, model: string, requested?: EffortId): Promise<EffortId | undefined> {
+  if (requested === undefined) return undefined
+  const desired = String(requested) === 'max' ? ('high' as string) : String(requested)
+  const supported = await supportedEfforts(ctx, provider, model)
+  if (supported.includes(desired as EffortId)) return desired as EffortId
+  if (supported.includes(ReasoningEffortId('high'))) return ReasoningEffortId('high')
+  if (supported.includes(ReasoningEffortId('off'))) return ReasoningEffortId('off')
+  return undefined
+}
 
 /** Resolve the model route: the user's default selection, else the first provider/model. */
-export async function resolveRoute(ctx: Context): Promise<{ provider: string; model: string; reasoningEffort?: ReasoningEffortId }> {
+export async function resolveRoute(ctx: Context): Promise<{ provider: string; model: string; reasoningEffort?: EffortId }> {
   const dm = ctx.get('agentDefaultModel') as { currentSelection(): DefaultModelSelection } | undefined
   let provider = ''
   let model = ''
-  let reasoningEffort: ReasoningEffortId | undefined
+  let reasoningEffort: EffortId | undefined
   if (dm) {
     try {
       const sel = dm.currentSelection()
@@ -165,8 +213,9 @@ function mkMessage(role: 'user' | 'assistant', text: string, provider = '', mode
 export async function streamCompletion(
   ctx: Context,
   options: GenerateOptions,
-): Promise<{ text: string; toolCalls: { name: string; arguments: string }[] }> {
+): Promise<{ text: string; toolCalls: { name: string; arguments: string }[]; finishKind?: string }> {
   let text = ''
+  let finishKind: string | undefined
   const toolCalls: { name: string; arguments: string }[] = []
   const chunks = ctx.llm.stream(options)
   for await (const c of chunks) {
@@ -175,12 +224,13 @@ export async function streamCompletion(
       toolCalls.push({ name: c.block.name, arguments: c.block.arguments })
     } else if (c.type === 'finish') {
       const r = c.reason
+      finishKind = r.kind
       if (r.kind === 'error' || r.kind === 'aborted') {
         throw new Error(r.failure?.message ?? 'generation interrupted')
       }
     }
   }
-  return { text: text.trim(), toolCalls }
+  return { text: text.trim(), toolCalls, finishKind }
 }
 
 /** Stream one call and return only the visible text. */
@@ -327,7 +377,14 @@ function repairJson(text: string): unknown {
 export function parseResult(result: { text: string; toolCalls: { name: string; arguments: string }[] }): Record<string, unknown> | null {
   if (result.toolCalls.length) {
     for (const tc of result.toolCalls) {
-      try { return JSON.parse(tc.arguments) as Record<string, unknown> } catch { /* try next */ }
+      const direct = ((): Record<string, unknown> | null => {
+        try { return JSON.parse(tc.arguments) as Record<string, unknown> } catch { return null }
+      })()
+      if (direct !== null) return direct
+      // Tool arguments are raw model JSON — the same repair the text path
+      // uses rescues newlines and stray fences inside quoted strings.
+      const repaired = repairJson(tc.arguments) as Record<string, unknown> | null
+      if (repaired !== null) return repaired
     }
   }
   return (extractJson(result.text) ?? repairJson(result.text)) as Record<string, unknown> | null
@@ -411,27 +468,30 @@ export async function generateCard(ctx: Context, spec: TavernSpec, version: stri
     return { card: wrapCard(data, version, spec), rawText: result.text, fallback: data === null }
   }
   const route = await resolveRoute(ctx)
+  // Structured JSON: cap reasoning at "high" and give the model headroom —
+  // "max" effort swallows the whole budget and yields an empty fallback card.
+  const effort = await resolveEffort(ctx, route.provider, route.model, route.reasoningEffort)
+  const base = { provider: route.provider, model: route.model, reasoningEffort: effort, system: SYSTEM }
   result = await streamCompletion(ctx, {
-    provider: route.provider,
-    model: route.model,
-    reasoningEffort: route.reasoningEffort,
+    ...base,
     messages: [mkMessage('user', prompt)],
-    system: SYSTEM,
     tools: [CARD_TOOL],
     temperature: 0.85,
-    maxTokens: 3200,
+    maxTokens: 8192,
   })
   let data = parseResult(result)
   if (!data) {
+    // Second chance: thinking disabled, plain JSON only — deterministic and
+    // cheap, it also rescues tool-arg JSON the model mangled.
     const retryPrompt = prompt + '\n\n【再次强调】请只输出一个合法的 JSON 对象本身，不要调用工具、不要任何解释、不要 Markdown 代码块；字符串里的换行必须用 \\n 转义。'
     result = await streamCompletion(ctx, {
       provider: route.provider,
       model: route.model,
-      reasoningEffort: route.reasoningEffort,
+      reasoningEffort: (ReasoningEffortId('off')),
       messages: [mkMessage('user', retryPrompt)],
       system: SYSTEM,
       temperature: 0.3,
-      maxTokens: 3200,
+      maxTokens: 8192,
     })
     data = parseResult(result)
   }
@@ -447,15 +507,28 @@ export async function generateWorldbook(ctx: Context, spec: TavernSpec, card: Ch
     text = (await customComplete(custom, { system: SYSTEM, messages: [{ role: 'user', content: prompt }], temperature: 0.7, maxTokens: 2200 })).text
   } else {
     const route = await resolveRoute(ctx)
+    const effort = await resolveEffort(ctx, route.provider, route.model, route.reasoningEffort)
     text = await streamText(ctx, {
       provider: route.provider,
       model: route.model,
-      reasoningEffort: route.reasoningEffort,
+      reasoningEffort: effort,
       messages: [mkMessage('user', prompt)],
       system: SYSTEM,
       temperature: 0.7,
-      maxTokens: 2200,
+      maxTokens: 4096,
     })
+    if (text === '') {
+      // Structured JSON again: thinking disabled beats an empty answer.
+      text = await streamText(ctx, {
+        provider: route.provider,
+        model: route.model,
+        reasoningEffort: (ReasoningEffortId('off')),
+        messages: [mkMessage('user', prompt)],
+        system: SYSTEM,
+        temperature: 0.3,
+        maxTokens: 4096,
+      })
+    }
   }
   const parsed = (extractJson(text) ?? repairJson(text)) as { entries?: unknown } | null
   const entries = parsed && Array.isArray(parsed.entries) ? parsed.entries : []
@@ -501,15 +574,18 @@ export async function chatReply(ctx: Context, card: CharCard, messages: ChatMess
   const route = await resolveRoute(ctx)
   const p = provider && model ? provider : route.provider
   const m = provider && model ? model : route.model
+  // Same reasoning policy as generation: "max" effort can swallow the whole
+  // reply budget on a reasoning-heavy default model, yielding empty turns.
+  const effort = await resolveEffort(ctx, p, m, route.reasoningEffort)
   const modelMessages = messages.map((msg) => mkMessage(msg.role === 'assistant' ? 'assistant' : 'user', msg.content, p, m))
   return streamText(ctx, {
     provider: p,
     model: m,
-    reasoningEffort: route.reasoningEffort,
+    reasoningEffort: effort,
     messages: modelMessages,
     system,
     temperature: 0.9,
-    maxTokens: 600,
+    maxTokens: 1200,
   })
 }
 

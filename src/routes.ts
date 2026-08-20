@@ -78,6 +78,24 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   }
 }
 
+/** Plain-object check shared by the route guards. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Structural sanity for a TavernSpec: the nested section objects must exist. */
+function looksLikeSpec(value: unknown): value is TavernSpec {
+  if (!isRecord(value)) return false
+  const spec = value as Record<string, unknown>
+  return isRecord(spec.basic) && isRecord(spec.appearance) && isRecord(spec.personality)
+    && isRecord(spec.background) && isRecord(spec.dialogue) && isRecord(spec.scenario)
+}
+
+/** Structural sanity for a V2/V3 character card: the data object must exist. */
+function looksLikeCard(value: unknown): value is CharCard {
+  return isRecord(value) && isRecord((value as Record<string, unknown>).data)
+}
+
 /**
  * Build every /api/dsh-portable-tavern route.
  * @param ctx - host context carrying webServer and llm.
@@ -108,7 +126,11 @@ export function makeRoutes(ctx: Context): WebRoute[] {
           writeError(res, 400, 'invalid JSON body')
           return
         }
-        const spec = (body.spec ?? {}) as TavernSpec
+        if (!looksLikeSpec(body.spec)) {
+          writeError(res, 400, 'spec 缺少必需的设定分组（basic/appearance/personality/background/dialogue/scenario）')
+          return
+        }
+        const spec = body.spec as TavernSpec
         const version = body.version === 'v3' ? 'v3' : 'v2'
         try {
           const { card, rawText, fallback } = await generateCard(ctx, spec, version, readCustom(body))
@@ -128,8 +150,12 @@ export function makeRoutes(ctx: Context): WebRoute[] {
           writeError(res, 400, 'invalid JSON body')
           return
         }
-        const spec = (body.spec ?? {}) as TavernSpec
-        const card = (body.card ?? null) as CharCard | null
+        if (!looksLikeSpec(body.spec)) {
+          writeError(res, 400, 'spec 缺少必需的设定分组（basic/appearance/personality/background/dialogue/scenario）')
+          return
+        }
+        const spec = body.spec as TavernSpec
+        const card = (body.card === null || body.card === undefined ? null : looksLikeCard(body.card) ? body.card as CharCard : null)
         try {
           const { entries, rawText } = await generateWorldbook(ctx, spec, card, readCustom(body))
           writeJson(res, 200, { entries, rawText })
@@ -161,8 +187,12 @@ export function makeRoutes(ctx: Context): WebRoute[] {
           writeError(res, 400, 'invalid JSON body')
           return
         }
-        const card = (body.card ?? {}) as CharCard
-        const messages = (Array.isArray(body.messages) ? body.messages : []) as ChatMessage[]
+        if (!looksLikeCard(body.card)) {
+          writeError(res, 400, 'card 必须是包含 data 对象的 V2/V3 角色卡')
+          return
+        }
+        const card = body.card as CharCard
+        const messages = (Array.isArray(body.messages) ? body.messages.filter((m): m is ChatMessage => isRecord(m) && (m.role === 'user' || m.role === 'assistant') && typeof (m as Record<string, unknown>).content === 'string') : []) as ChatMessage[]
         const provider = typeof body.provider === 'string' ? body.provider : undefined
         const model = typeof body.model === 'string' ? body.model : undefined
         const globalPrompt = typeof body.globalPrompt === 'string' ? body.globalPrompt : undefined

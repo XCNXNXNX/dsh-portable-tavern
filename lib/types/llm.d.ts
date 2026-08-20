@@ -4,7 +4,7 @@
  * hand-built calls, no agent loop, no DSH source changes.
  */
 import type { Context } from '@deepseek-ai/cordis';
-import type { GenerateOptions, ReasoningEffortId } from '@deepseek-ai/dsh-llm';
+import { type GenerateOptions, type ReasoningEffortId as EffortId } from '@deepseek-ai/dsh-llm';
 import type { CharCard, ChatMessage, LlmCustom, TavernSpec } from './protocol.ts';
 /** Stable generation prompt used by generate/worldbook. */
 export declare const SYSTEM = "\u4F60\u662F\u4E00\u4F4D\u4E13\u4E1A\u7684 SillyTavern \u89D2\u8272\u5361\u64B0\u5199\u4E13\u5BB6\uFF0C\u64C5\u957F\u5851\u9020\u9C9C\u6D3B\u3001\u7ACB\u4F53\u3001\u6709\u8BB0\u5FC6\u70B9\u7684\u89D2\u8272\u3002\u4F60\u4E25\u683C\u9075\u5FAA\u7528\u6237\u7684\u8F93\u51FA\u8981\u6C42\uFF0C\u901A\u8FC7\u8C03\u7528\u5DE5\u5177\u6216\u8F93\u51FA JSON \u8FD4\u56DE\u7ED3\u679C\u3002";
@@ -89,11 +89,19 @@ export declare const CARD_TOOL: {
         required: string[];
     };
 };
+/**
+ * Pick a safe reasoning effort for a structured-generation call. The harness
+ * default selection can carry `max` — handing that to a card/worldbook call
+ * makes the model think away the whole max-token budget and return nothing.
+ * Policy: never above `high`; drop entirely when the route does not support
+ * it (thinking-disabled models reject any effort on the wire).
+ */
+export declare function resolveEffort(ctx: Context, provider: string, model: string, requested?: EffortId): Promise<EffortId | undefined>;
 /** Resolve the model route: the user's default selection, else the first provider/model. */
 export declare function resolveRoute(ctx: Context): Promise<{
     provider: string;
     model: string;
-    reasoningEffort?: ReasoningEffortId;
+    reasoningEffort?: EffortId;
 }>;
 /** Stream one call and collect visible text plus any emitted tool calls. */
 export declare function streamCompletion(ctx: Context, options: GenerateOptions): Promise<{
@@ -102,6 +110,7 @@ export declare function streamCompletion(ctx: Context, options: GenerateOptions)
         name: string;
         arguments: string;
     }[];
+    finishKind?: string;
 }>;
 /** Stream one call and return only the visible text. */
 export declare function streamText(ctx: Context, options: GenerateOptions): Promise<string>;
