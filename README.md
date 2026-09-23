@@ -1,3 +1,5 @@
+
+
 # dsh-portable-tavern
 
 DSH Web GUI 的「便携酒馆」插件：RPG 式 SillyTavern V2/V3 角色卡生成器 + 酒馆角色扮演聊天一体。
@@ -32,7 +34,7 @@ dsh plugin --profile web add dsh-portable-tavern
 dsh plugin --profile web add github:XCNXNXNX/dsh-portable-tavern
 
 # Release tarball
-dsh plugin --profile web add https://github.com/XCNXNXNX/dsh-portable-tavern/releases/download/v0.2.0/dsh-portable-tavern-0.2.0.tgz
+dsh plugin --profile web add https://github.com/XCNXNXNX/dsh-portable-tavern/releases/download/v0.3.0/dsh-portable-tavern-0.3.0.tgz
 ```
 
 ## 架构
