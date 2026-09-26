@@ -191,6 +191,12 @@ function shoot(shot, out, url, tag) {
     // Generous: the harness fetches its fixtures before it boots, and a budget
     // that expires early yields a blank page rather than a partial one.
     '--virtual-time-budget=30000',
+    // Virtual time can tear the capture mid-composite: the longest tab came out
+    // with half its tab bar and a slab of unpainted panel. This makes the
+    // screenshot wait for every compositor stage instead of whatever was ready.
+    '--run-all-compositor-stages-before-draw',
+    '--disable-new-content-rendering-timeout',
+    '--disable-features=PaintHolding,CalculateNativeWinOcclusion',
     '--screenshot=' + out,
     url,
   ], { detached: true, stdio: 'ignore' })
