@@ -3,6 +3,28 @@
 给 DeepSeek Harness Web GUI 用的**角色扮演酒馆**：捏角色卡、和角色聊天、把角色组队，
 想探险的时候再开一局跑团。全部数据留在你自己的浏览器里。
 
+## 界面预览
+
+聊天 —— 冒险进行中，把队友拉到一边商量对策，商量完一键带回冒险窗口：
+
+![聊天](assets/chat.png)
+
+冒险 —— 系统给出"至少要掷出多少"并把加成一栏栏摊开，成败按差值分档，AI 只负责讲：
+
+![冒险](assets/adventure.png)
+
+队伍 —— 人数、形象、属性、独立提示词、每个人各自的模型接入：
+
+![队伍](assets/party.png)
+
+插件 —— 内置六套美化主题，也可以装社区的酒馆扩展：
+
+![插件](assets/themes.png)
+
+角色卡 —— 可视化捏人，捏好可以直接拉进队伍：
+
+![角色卡](assets/character.png)
+
 ## 它是什么
 
 一个装在你 DSH 侧边栏里的酒馆面板，一共六个标签页：
@@ -96,6 +118,19 @@ dsh plugin --profile web add github:XCNXNXNX/dsh-portable-tavern
 - 你自己填的 API Key 只存在浏览器，只随单次请求发给本机酒馆路由转发，不写日志、不上传。
 - 酒馆的所有后端路由都只接受本机（127.0.0.1 / localhost）请求。
 
+## 开发
+
+```bash
+pnpm install
+pnpm build          # esbuild 打包宿主半 + 浏览器半，并生成类型声明
+pnpm typecheck
+pnpm test:engine    # 跑团引擎与触发条件的断言
+```
+
+上面的效果图是用**真实构建产物**离屏渲染出来的，不是手绘的：
+`node docs/preview/shots.mjs` 会起一个本地静态服务器挂载 `lib/client.js`，
+用无头 Edge 逐个标签页截图到 `assets/`。界面变了重跑一次即可。
+
 ## 许可
 
-BSD-3-Clause
+MIT

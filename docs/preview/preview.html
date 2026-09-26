@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>便携酒馆 · 截图预览</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0b0d12; }
+  /* A plausible desktop backdrop so the floating panel reads as a panel. */
+  body { background:
+      radial-gradient(1200px 600px at 20% 0%, #1b2130 0%, rgba(27,33,48,0) 70%),
+      linear-gradient(180deg, #0d1017, #090b10); }
+  #boot-error { color: #ff8080; font: 13px/1.6 ui-monospace, Consolas, monospace; padding: 16px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="boot-error"></div>
+<script>
+/* ------------------------------------------------------------------ *
+ * Offline harness that mounts the REAL client bundle, so screenshots
+ * show the actual components rather than a mock-up.
+ *
+ * It plays the part the harness normally plays: it seeds localStorage
+ * with a demo tavern, then stands in for window.__ModuleLoader__ and
+ * the cordis slot service, and finally opens the panel and switches to
+ * the tab named in ?tab=.
+ * ------------------------------------------------------------------ */
+(function () {
+  var params = new URLSearchParams(location.search)
+  var tab = params.get('tab') || 'character'
+
+  function img(seed, a, b) {
+    /* Deterministic little SVG portrait so the demo has faces without
+       shipping binary assets. */
+    var hue = 0
+    for (var i = 0; i < seed.length; i++) hue = (hue * 31 + seed.charCodeAt(i)) % 360
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">' +
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0%" stop-color="hsl(' + hue + ',52%,' + a + '%)"/>' +
+      '<stop offset="100%" stop-color="hsl(' + ((hue + 48) % 360) + ',58%,' + b + '%)"/>' +
+      '</linearGradient></defs>' +
+      '<rect width="128" height="128" fill="url(#g)"/>' +
+      '<circle cx="64" cy="50" r="22" fill="rgba(255,255,255,0.22)"/>' +
+      '<ellipse cx="64" cy="112" rx="38" ry="30" fill="rgba(255,255,255,0.18)"/>' +
+      '</svg>'
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg)
+  }
+
+  var CARD = {
+    spec: 'chara_card_v2', spec_version: '2.0',
+    data: {
+      name: '岚',
+      description: '岚是雾岭一带最后一位还愿意带路的守林人。她熟悉每一条兽径，也熟悉那些不该被踩出来的路。\n她左手小指缺了一截，据说是早年替一支商队挡下的一刀。',
+      personality: '沉默、警觉、对自己认定的人极尽耐心。不擅长解释自己为什么这么做。',
+      scenario: '雾岭的第九盏灯昨夜熄了。你们在岭脚的旧驿站碰头，天亮之前必须决定要不要上山。',
+      first_mes: '（她把一盏油灯推到桌子中间，火苗晃了晃）\n\n"山上的灯灭了三天。镇里没人肯上去。"\n\n她抬眼看你。\n\n"你去不去？"',
+      mes_example: '<START>\n{{user}}: 你怕什么？\n{{char}}: （她把刀往桌上一放）怕的不是山。是山记得我。',
+      creator_notes: '示例角色，用于便携酒馆的界面预览。',
+      system_prompt: '你是 {{char}}，一个寡言但可靠的守林人。说话短，动作多，从不主动解释自己。',
+      post_history_instructions: '',
+      alternate_greetings: ['（她已经在门口等你了，背上是打包好的行囊）走。'],
+      tags: ['守林人', '悬疑', '雾岭'],
+      creator: 'dsh-portable-tavern', character_version: '1.0',
+      extensions: { avatar: img('lan', 46, 30) },
+    },
+  }
+
+  var SPEC = {
+    basic: { name: '岚', age: 31, ageUnknown: false, gender: '女', race: '人类', raceCustom: '', job: '猎人', jobCustom: '' },
+    appearance: { height: 168, heightUnit: 'cm', build: '健壮', hairColor: '#5a3a1a', hairStyle: '扎发', eyeColor: '#2e8b57', skinColor: '#e0ac69', features: ['疤痕'] },
+    personality: { extroversion: 3, agreeableness: 6, conscientiousness: 8, stability: 7, openness: 6, traits: ['冷静', '谨慎', '忠诚'] },
+    background: { origin: '流浪者', experience: '替一支商队挡下一刀，左手小指缺了一截。从那以后不再替人做保。', world: '雾岭：九盏引路灯是镇上唯一的路标，灯灭之后没人敢上山。' },
+    abilities: ['箭术', '追踪', '潜行', '医术'],
+    dialogue: { style: '随性口语', tone: '冷淡', person: 'first' },
+    scenario: { scene: '雾岭岭脚的旧驿站，天亮之前。', sceneTemplate: '酒馆', openerStyle: '简短' },
+  }
+
+  var PARTY = {
+    id: 'demo-party', name: '雾岭小队', narratorPrompt: '偏向悬疑与克制的恐怖，不写血腥场面。',
+    narrator: { mode: 'inherit', provider: '', model: '', baseUrl: '', apiKey: '', customModel: '' },
+    savedAt: Date.now(),
+    members: [
+      { id: 'm-lan', name: '岚', role: '守林人', avatar: img('lan', 46, 30),
+        prompt: '沉默寡言的守林人。说话极短，习惯先观察再行动，对山林有一种近乎愧疚的熟悉。',
+        attributes: { str: 12, dex: 16, con: 13, int: 12, wis: 17, cha: 9 },
+        skills: [{ name: '追踪', attr: 'wis', bonus: 6 }, { name: '潜行', attr: 'dex', bonus: 6 }, { name: '箭术', attr: 'dex', bonus: 5 }],
+        hp: 22, maxHp: 26, status: [],
+        llm: { mode: 'inherit', provider: '', model: '', baseUrl: '', apiKey: '', customModel: '' } },
+      { id: 'm-ke', name: '柯', role: '游方学者', avatar: img('ke', 58, 38),
+        prompt: '好奇心压过恐惧的年轻学者。喜欢引用旧书，遇到未知先记录再逃跑。',
+        attributes: { str: 9, dex: 11, con: 11, int: 18, wis: 14, cha: 13 },
+        skills: [{ name: '博学', attr: 'int', bonus: 7 }, { name: '医术', attr: 'wis', bonus: 4 }],
+        hp: 15, maxHp: 18, status: [],
+        llm: { mode: 'dsh', provider: 'deepseek-official', model: 'deepseek-flash', baseUrl: '', apiKey: '', customModel: '' } },
+      { id: 'm-yao', name: '姚', role: '雇佣剑士', avatar: img('yao', 40, 26),
+        prompt: '为了钱什么都肯做，但绝不欠人情。嘴上刻薄，动手时永远站在最前面。',
+        attributes: { str: 17, dex: 13, con: 15, int: 10, wis: 11, cha: 12 },
+        skills: [{ name: '剑术', attr: 'str', bonus: 7 }, { name: '威吓', attr: 'cha', bonus: 5 }],
+        hp: 9, maxHp: 30, status: ['受创'],
+        llm: { mode: 'custom', provider: '', model: '', baseUrl: 'https://api.example.com', apiKey: '', customModel: 'my-local-model' } },
+    ],
+  }
+
+  var STATE = {
+    scene: '雾岭岭脚的旧驿站。天没亮，雨停了，屋檐还在滴水。第九盏灯的方向一片黑。',
+    turn: 4, encounter: null,
+    pending: {
+      memberId: 'm-lan', kind: 'chase', threat: 62,
+      option: { id: 'flee', label: '沿兽径脱身', attribute: 'dex', skill: '潜行', difficulty: 55, modifier: 0, hint: '不恋战，贴着岩壁往下撤。' },
+      computed: { actorId: 'm-lan', actorName: '岚', optionId: 'flee', optionLabel: '沿兽径脱身', required: 41,
+        breakdown: [
+          { label: '情境基础难度（普通）', value: 55 },
+          { label: '对手威胁（62）', value: 2 },
+          { label: '敏捷 16 调整', value: -12 },
+          { label: '技能·潜行 熟练', value: -6 },
+        ], difficultyLabel: '普通' },
+    },
+    log: [
+      { id: 'l1', kind: 'scene', who: '守秘人', at: 1, text: '驿站的木门在你身后合上。岚已经在外面站了一会儿，靴子上全是泥。\n\n"第九盏灯不是灭的。"她说，"是被人拿走的。"\n\n她从怀里摸出一截灯芯，断口很整齐。' },
+      { id: 'l2', kind: 'action', who: '岚', at: 2, text: '我检查灯芯的断口，看看是用什么切的。' },
+      { id: 'l3', kind: 'check', who: '系统', at: 3, check: { roll: 73, required: 45, margin: 28, band: 'success', bandLabel: '成功', success: true, critical: 'none',
+        directive: '', effects: { hpLoss: 0, addStatus: [], removeStatus: [], endsEncounter: false },
+        breakdown: [{ label: '情境基础难度（普通）', value: 55 }, { label: '感知 17 调整', value: -14 }, { label: '技能·追踪 熟练', value: -6 }] } },
+      { id: 'l4', kind: 'result', who: '系统', at: 4, text: '岚：状态未发生变化' },
+      { id: 'l5', kind: 'scene', who: '守秘人', at: 5, text: '刀口是从内侧切的，用了很短的一把刀，而且切了不止一次。\n\n"不是外人干的。"岚把灯芯收好，站起来往岭上看。\n\n雾里亮起一点光——在山腰，和驿站的高度差不了多少，而且正在往下移动。' },
+      { id: 'l6', kind: 'speech', who: '柯', at: 6, text: '（压低声音）那不是灯。灯不会走得这么匀。' },
+      { id: 'l7', kind: 'speech', who: '姚', at: 7, text: '（把剑鞘往地上一磕）说人话——能不能砍？' },
+      { id: 'l8', kind: 'system', who: '剧情大纲', at: 8, text: '节点「山腰的火」触发（第 4 回合（条件：≥3））' },
+      { id: 'l9', kind: 'scene', who: '守秘人', at: 9, text: '那点光停住了。然后开始斜着往你们这边下来，速度快了。\n\n岚没有回头，只是把弓从背上取了下来。\n\n"退到岩壁下面，"她说，"别站在空地上。"' },
+      { id: 'l10', kind: 'scene', who: '守秘人', at: 10, text: '你贴着湿冷的岩壁往下撤。脚下的碎石松得厉害，每踩一步都往下滑一小截。\n\n那东西跟着下来了。它不喊，也不急，只是始终保持着一个固定的距离——像早就知道你要走这条路。' },
+    ],
+    inventory: ['一截被切过的灯芯', '半包烟草'],
+    facts: ['第九盏灯不是熄灭的，是被取走的', '灯芯断口来自内侧，用的是短刀', '山腰有会移动的光源'],
+    streak: -1, firedBeats: ['b-hill'],
+    setup: {
+      title: '雾岭的第九盏灯',
+      premise: '雾岭的九盏引路灯是镇上唯一的路标。第九盏在三天前熄灭，上山的人一个也没回来。你们在岭脚的旧驿站碰头，天亮之前必须决定上不上山。',
+      tone: '悬疑与克制的不安，重氛围；不描写血腥场面。',
+      rules: '不出现现代科技；NPC 不会无缘无故背叛；失败会有代价，但不会直接死亡。',
+      outline: [
+        { id: 'b-inn', title: '驿站的信', trigger: { kind: 'turn', turn: 1 }, event: '在驿站柜台下发现一封没寄出的信，收信人是镇上的灯官。', once: true, fired: true, firedAtTurn: 1 },
+        { id: 'b-hill', title: '山腰的火', trigger: { kind: 'turn', turn: 3 }, event: '山腰出现移动的光，并且开始朝玩家所在的位置靠近。', once: true, fired: true, firedAtTurn: 4 },
+        { id: 'b-blood', title: '有人受伤', trigger: { kind: 'hp', hpBelow: 0.4 }, event: '队里有人伤得比说出来的更重。让玩家自己发现这件事。', once: true, fired: false, firedAtTurn: 0 },
+        { id: 'b-cut', title: '断掉的绳', trigger: { kind: 'failure', streak: 2 }, event: '连续失败之后，退路被切断：来时的那段栈道塌了。', once: true, fired: false, firedAtTurn: 0 },
+        { id: 'b-fog', title: '起雾', trigger: { kind: 'encounter', encounterKind: 'chase' }, event: '一场追逐开始后，浓雾涌上来，能见度骤降。', once: false, fired: false, firedAtTurn: 0 },
+      ],
+    },
+  }
+
+  var THREADS = {
+    'm-lan': [
+      { role: 'assistant', content: '（她没回头，声音压得很低）\n\n"说。"' },
+      { role: 'user', content: '那点光一直在跟着我们。如果我们分两路走，它只能追一个。' },
+      { role: 'assistant', content: '（她沉默了几秒）\n\n"不行。雾里分开，就是各自送死。"\n\n她指了指岩壁下方一条几乎看不出来的缝隙。\n\n"我一个人贴着岩壁走，把它引过去。你们从上面绕。它认的是脚步声，不认人。"' },
+      { role: 'user', content: '太险了。有没有别的办法？' },
+      { role: 'assistant', content: '（她把弓弦又紧了一格）\n\n"有。我们可以一起站在这里，等它下来，然后发现它比我们想的大。"\n\n她看了你一眼。\n\n"你挑。"' },
+    ],
+    'm-yao': [
+      { role: 'assistant', content: '（靠着墙，剑横在膝盖上）\n\n"我不管那是什么。我只想知道，砍得动砍不动。"' },
+    ],
+  }
+
+  var SETTINGS = { width: 520, accent: '#4f7cff', showTrigger: true }
+
+  try {
+    localStorage.setItem('dsh.portable-tavern.workspace.v1', JSON.stringify({
+      spec: SPEC, card: CARD, version: 'v2', chatModel: '', globalPrompt: '', avatar: CARD.data.extensions.avatar,
+      chat: [{ role: 'assistant', content: CARD.data.first_mes }], worldbook: null,
+    }))
+    localStorage.setItem('dsh.portable-tavern.party.current.v1', JSON.stringify(PARTY))
+    localStorage.setItem('dsh.portable-tavern.activeParty.v1', PARTY.id)
+    localStorage.setItem('dsh.portable-tavern.rpg.v1', JSON.stringify(STATE))
+    localStorage.setItem('dsh.portable-tavern.threads.v1', JSON.stringify(THREADS))
+    localStorage.setItem('dsh.portable-tavern.settings.v1', JSON.stringify(SETTINGS))
+    localStorage.setItem('dsh.portable-tavern.ext.enabled.v1', JSON.stringify(['nocturne']))
+    localStorage.setItem('dsh.portable-tavern.ext.theme.v1', 'nocturne')
+  } catch (e) { /* preview still boots */ }
+
+  window.__PREVIEW_TAB__ = tab
+})()
+</script>
+<script src="/vendor/react.development.js"></script>
+<script src="/vendor/react-dom.development.js"></script>
+<script>
+/* Stand in for the DSH module system: capture the bundle's factory and
+   materialise it immediately with the baseline externals. */
+(function () {
+  var captured = null
+  window.__ModuleLoader__ = {
+    mode: 'queue',
+    load: function (registration) { captured = registration },
+  }
+  function jsx(type, props, key) {
+    var p = {}
+    for (var k in props) p[k] = props[k]
+    if (key !== undefined) p.key = key
+    return React.createElement(type, p)
+  }
+  var jsxRuntime = { jsx: jsx, jsxs: jsx, jsxDEV: jsx, Fragment: React.Fragment }
+  var table = { react: React, 'react-dom': ReactDOM, 'react/jsx-runtime': jsxRuntime, 'react/jsx-dev-runtime': jsxRuntime }
+  function requireSpec(spec) {
+    if (table[spec] !== undefined) return table[spec]
+    console.error('[preview] missing external: ' + spec)
+    return {}
+  }
+  var overlay = null
+  var settingsEntry = null
+  var slots = {
+    inject: function (key, callback) { try { callback() } catch (e) { console.error(e) } return function () {} },
+    register: function (options, render) {
+      if (options && options.name === 'shell.overlay') overlay = render
+      else if (options && options.name === 'settings.section') settingsEntry = render
+      return function () {}
+    },
+  }
+  var ctx = { get: function (name) { return name === 'slots' ? slots : undefined } }
+  window.addEventListener('load', function () {
+    try {
+      if (captured === null) throw new Error('client bundle did not call __ModuleLoader__.load')
+      var exportsObject = captured.factory(requireSpec)
+      exportsObject.apply(ctx)
+      var host = document.createElement('div')
+      document.body.appendChild(host)
+      ReactDOM.createRoot(host).render(React.createElement(overlay))
+      // Open the panel, then switch to the requested tab.
+      setTimeout(function () {
+        var trigger = document.querySelector('.stTrigger')
+        if (trigger) trigger.click()
+        setTimeout(function () {
+          var wanted = window.__PREVIEW_TAB__
+          if (wanted && wanted !== 'character') {
+            var labels = { chat: '聊天', rpg: '冒险', party: '队伍', plugins: '插件', settings: '设置' }
+            var target = labels[wanted]
+            var buttons = document.querySelectorAll('.stTabbar .stTab')
+            for (var i = 0; i < buttons.length; i++) {
+              if (buttons[i].textContent === target) { buttons[i].click(); break }
+            }
+          }
+          document.title = 'ready'
+        }, 120)
+      }, 120)
+    } catch (e) {
+      document.getElementById('boot-error').textContent = 'PREVIEW ERROR\n' + (e && e.stack ? e.stack : String(e))
+    }
+  })
+})()
+</script>
+<script src="/lib/client.js"></script>
+</body>
+</html>

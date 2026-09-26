@@ -1235,11 +1235,17 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       </Section>
       <Section title="扩展设置面板" hint="社区扩展把自己的设置界面挂在这里" defaultOpen={false}>
         <div className={css.stLabel}>
-          已启用的扩展会把它们的设置面板插入下面的区域（对应 SillyTavern 的 #extensions_settings 与 #extensions_settings2 挂载点）。
-          如果此处为空，说明当前没有启用任何需要设置界面的扩展。
+          已启用的扩展会把它们的设置面板插入下面的「扩展面板」区域（对应 SillyTavern 的 #extensions_settings
+          与 #extensions_settings2 挂载点）。如果那里是空的，说明当前没有启用任何需要设置界面的扩展。
         </div>
-        <div id="pt-ext-mount" className={css.stExtMount} />
       </Section>
+      {/*
+        The mount is deliberately NOT inside a collapsible Section: the
+        compatibility host looks for it by id the moment the tavern mounts, and
+        a collapsed section renders no children -- which is exactly why the host
+        used to give up and park its panel in a floating dock over the chat box.
+      */}
+      <div id="pt-ext-mount" className={css.stExtMount} />
       <Section title="本地音乐" defaultOpen>
         <Field label="本地音乐（支持文件夹、按顺序播放）">
           <div className={cx(css.stRow, css.stGap)}>
