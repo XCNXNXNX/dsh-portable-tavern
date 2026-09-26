@@ -32,6 +32,22 @@ export interface ApiErrorBody {
   error: string
 }
 
+/**
+ * How the temperature field reaches the provider (GitHub issue #1). Some
+ * models pin it (KIMI K3: 'only 1 is allowed'), some reject the field
+ * entirely; the host additionally learns such constraints per model route, so
+ * this is the user's preference, not the last word.
+ */
+export interface TemperaturePolicy {
+  /** auto = the per-call default; fixed = always 'value'; omit = never send it. */
+  mode: 'auto' | 'fixed' | 'omit'
+  /** Value used by mode 'fixed'. */
+  value: number
+}
+
+/** Default sampling policy applied when the browser sends none. */
+export const DEFAULT_TEMPERATURE_POLICY: TemperaturePolicy = { mode: 'auto', value: 0.85 }
+
 /** The RPG form state assembled by the browser panel. */
 export interface TavernBasic {
   name: string
@@ -148,6 +164,8 @@ export interface WorldbookResponse {
 export interface ModelsResponse {
   options: { provider: string; model: string; label: string }[]
   current: { provider: string; model: string } | null
+  /** Temperature constraints the host learned from upstream 400s (issue #1). */
+  learnedTemperatures?: { key: string; constraint: string }[]
 }
 
 export interface ChatResponse {

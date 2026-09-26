@@ -21,5 +21,6 @@ export declare class TavernApi {
         ok: true;
         latencyMs: number;
         reply: string;
+        temperature?: string;
     }>;
 }

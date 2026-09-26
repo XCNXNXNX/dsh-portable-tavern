@@ -5,7 +5,7 @@
  * is masked in the UI (password input), and the host half never persists or
  * logs it.
  */
-import type { LlmCustom } from '../protocol.ts';
+import { type LlmCustom, type TemperaturePolicy } from '../protocol.ts';
 export interface CustomLlmConfig extends LlmCustom {
     /** False when every field is empty (fully disconnected). */
     configured: boolean;
@@ -14,6 +14,13 @@ export interface CustomLlmConfig extends LlmCustom {
 export declare function loadCustomLlm(): CustomLlmConfig;
 /** Persist the config (quota failures swallowed — caller state still holds it). */
 export declare function saveCustomLlm(config: LlmCustom): void;
+/**
+ * Read the temperature policy (issue #1). Stored separately from the endpoint
+ * config because it also governs DSH-managed providers, which need no endpoint.
+ */
+export declare function loadSampling(): TemperaturePolicy;
+/** Persist the temperature policy. */
+export declare function saveSampling(policy: TemperaturePolicy): void;
 /** Wipe the stored config. */
 export declare function clearCustomLlm(): void;
 /** The request-shape payload: undefined when not fully configured. */

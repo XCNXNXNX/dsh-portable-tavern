@@ -13,7 +13,7 @@ import {
   type TavernSpec,
   type WorldbookResponse,
 } from '../protocol.ts'
-import { customLlmPayload } from './llm-custom.ts'
+import { customLlmPayload, loadSampling } from './llm-custom.ts'
 
 /** Error carrying the route's JSON error message. */
 export class TavernApiError extends Error {
@@ -52,11 +52,11 @@ async function post<T>(path: string, payload: unknown): Promise<T> {
 /** The browser half's only data entry point. */
 export class TavernApi {
   async generate(spec: TavernSpec, version: string): Promise<GenerateResponse> {
-    return post<GenerateResponse>(TAVERN_API.generate, { spec, version, custom: customLlmPayload() })
+    return post<GenerateResponse>(TAVERN_API.generate, { spec, version, custom: customLlmPayload(), sampling: loadSampling() })
   }
 
   async worldbook(spec: TavernSpec, card: CharCard | null): Promise<WorldbookResponse> {
-    return post<WorldbookResponse>(TAVERN_API.worldbook, { spec, card, custom: customLlmPayload() })
+    return post<WorldbookResponse>(TAVERN_API.worldbook, { spec, card, custom: customLlmPayload(), sampling: loadSampling() })
   }
 
   async models(): Promise<ModelsResponse> {
@@ -75,10 +75,11 @@ export class TavernApi {
       model: useCustom ? undefined : model,
       globalPrompt,
       custom: useCustom ? customLlmPayload() : undefined,
+      sampling: loadSampling(),
     })
   }
 
-  async test(custom: { baseUrl: string; apiKey: string; model: string }): Promise<{ ok: true; latencyMs: number; reply: string }> {
-    return post<{ ok: true; latencyMs: number; reply: string }>(TAVERN_API.test, { custom })
+  async test(custom: { baseUrl: string; apiKey: string; model: string }): Promise<{ ok: true; latencyMs: number; reply: string; temperature?: string }> {
+    return post<{ ok: true; latencyMs: number; reply: string; temperature?: string }>(TAVERN_API.test, { custom, sampling: loadSampling() })
   }
 }

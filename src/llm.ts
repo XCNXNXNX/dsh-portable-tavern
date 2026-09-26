@@ -6,7 +6,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { ReasoningEffortId, type GenerateOptions, type ReasoningEffortId as EffortId, type StreamChunk, type LlmRuntime } from '@deepseek-ai/dsh-llm'
-import type { CharCard, ChatMessage, LlmCustom, TavernSpec } from './protocol.ts'
+import type { CharCard, ChatMessage, LlmCustom, TavernSpec, TemperaturePolicy } from './protocol.ts'
+import { resolveTemperature, samplingKey, withTemperatureRetry } from './temperature.ts'
 
 /** Stable generation prompt used by generate/worldbook. */
 export const SYSTEM = '你是一位专业的 SillyTavern 角色卡撰写专家，擅长塑造鲜活、立体、有记忆点的角色。你严格遵循用户的输出要求，通过调用工具或输出 JSON 返回结果。'
@@ -44,16 +45,18 @@ export async function customComplete(custom: LlmCustom, options: {
   if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
     throw new Error('自定义接口地址必须是 http(s):// 开头')
   }
-  const body = {
+  const body: Record<string, unknown> = {
     model: custom.model,
     messages: [
       ...(options.system ? [{ role: 'system', content: options.system }] : []),
       ...options.messages.map(m => ({ role: m.role, content: m.content })),
     ],
-    temperature: options.temperature ?? 0.8,
     max_tokens: options.maxTokens ?? 1600,
     stream: false,
   }
+  // Issue #1: undefined means "this model rejects the field" -- omit it rather
+  // than substituting a default the provider will 400 on.
+  if (options.temperature !== undefined) body.temperature = options.temperature
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 180_000)
   let response: Response
@@ -237,6 +240,68 @@ export async function streamCompletion(
 export async function streamText(ctx: Context, options: GenerateOptions): Promise<string> {
   const r = await streamCompletion(ctx, options)
   return r.text
+}
+
+// ---------------------------------------------------------------------------
+// temperature-aware call helpers (GitHub issue #1)
+// ---------------------------------------------------------------------------
+
+/**
+ * One completion against the user's own endpoint, honouring the sampling
+ * policy: `purposeTemperature` is the default the call site wants, and a
+ * learned upstream constraint (issue #1) overrides both it and the policy.
+ * @param custom - the user-supplied endpoint.
+ * @param options - prompt, budget and the per-purpose default temperature.
+ * @param sampling - the user's temperature policy (undefined = auto).
+ */
+async function customWithPolicy(
+  custom: LlmCustom,
+  options: {
+    system?: string
+    messages: { role: 'user' | 'assistant'; content: string }[]
+    temperature: number
+    maxTokens?: number
+  },
+  sampling?: TemperaturePolicy,
+): Promise<CompletionResult> {
+  const key = samplingKey('custom', custom.baseUrl, custom.model)
+  return withTemperatureRetry(key, sampling, options.temperature, (temperature) =>
+    customComplete(custom, { ...options, temperature }))
+}
+
+/**
+ * One completion on a DSH-managed provider, honouring the reasoning-effort
+ * policy (above) and the temperature policy (issue #1).
+ * @param ctx - host context carrying the llm service.
+ * @param args - route, prompt, tool schemas and the per-purpose default temperature.
+ * @param sampling - the user's temperature policy (undefined = auto).
+ */
+async function dshWithPolicy(
+  ctx: Context,
+  args: {
+    provider: string
+    model: string
+    reasoningEffort?: EffortId
+    system?: string
+    messages: any[]
+    tools?: unknown[]
+    temperature: number
+    maxTokens: number
+  },
+  sampling?: TemperaturePolicy,
+): Promise<{ text: string; toolCalls: { name: string; arguments: string }[]; finishKind?: string }> {
+  const key = samplingKey('dsh', args.provider, args.model)
+  return withTemperatureRetry(key, sampling, args.temperature, (temperature) =>
+    streamCompletion(ctx, {
+      provider: args.provider,
+      model: args.model,
+      reasoningEffort: args.reasoningEffort,
+      system: args.system,
+      messages: args.messages,
+      tools: args.tools,
+      temperature,
+      maxTokens: args.maxTokens,
+    } as GenerateOptions))
 }
 
 function describeSpec(spec: TavernSpec): string {
@@ -453,16 +518,16 @@ function fallbackData(spec: TavernSpec): Record<string, unknown> {
 }
 
 /** Generate the card data, retrying once with a stricter plain-JSON prompt on failure. */
-export async function generateCard(ctx: Context, spec: TavernSpec, version: string, custom?: LlmCustom): Promise<{ card: CharCard; rawText: string; fallback: boolean }> {
+export async function generateCard(ctx: Context, spec: TavernSpec, version: string, custom?: LlmCustom, sampling?: TemperaturePolicy): Promise<{ card: CharCard; rawText: string; fallback: boolean }> {
   const prompt = buildPrompt(spec)
   let result: CompletionResult
   if (customReady(custom)) {
     // Custom endpoint: plain-JSON contract (buildPrompt already instructs it).
-    result = await customComplete(custom, { system: SYSTEM, messages: [{ role: 'user', content: prompt }], temperature: 0.85, maxTokens: 3200 })
+    result = await customWithPolicy(custom, { system: SYSTEM, messages: [{ role: 'user', content: prompt }], temperature: 0.85, maxTokens: 3200 }, sampling)
     let data = parseResult(result)
     if (data === null) {
       const retryPrompt = prompt + '\n\n【再次强调】请只输出一个合法的 JSON 对象本身，不要任何解释、不要 Markdown 代码块；字符串里的换行必须用 \\n 转义。'
-      result = await customComplete(custom, { system: SYSTEM, messages: [{ role: 'user', content: retryPrompt }], temperature: 0.3, maxTokens: 3200 })
+      result = await customWithPolicy(custom, { system: SYSTEM, messages: [{ role: 'user', content: retryPrompt }], temperature: 0.3, maxTokens: 3200 }, sampling)
       data = parseResult(result)
     }
     return { card: wrapCard(data, version, spec), rawText: result.text, fallback: data === null }
@@ -471,28 +536,30 @@ export async function generateCard(ctx: Context, spec: TavernSpec, version: stri
   // Structured JSON: cap reasoning at "high" and give the model headroom —
   // "max" effort swallows the whole budget and yields an empty fallback card.
   const effort = await resolveEffort(ctx, route.provider, route.model, route.reasoningEffort)
-  const base = { provider: route.provider, model: route.model, reasoningEffort: effort, system: SYSTEM }
-  result = await streamCompletion(ctx, {
-    ...base,
+  result = await dshWithPolicy(ctx, {
+    provider: route.provider,
+    model: route.model,
+    reasoningEffort: effort,
+    system: SYSTEM,
     messages: [mkMessage('user', prompt)],
     tools: [CARD_TOOL],
     temperature: 0.85,
     maxTokens: 8192,
-  })
+  }, sampling)
   let data = parseResult(result)
   if (!data) {
     // Second chance: thinking disabled, plain JSON only — deterministic and
     // cheap, it also rescues tool-arg JSON the model mangled.
     const retryPrompt = prompt + '\n\n【再次强调】请只输出一个合法的 JSON 对象本身，不要调用工具、不要任何解释、不要 Markdown 代码块；字符串里的换行必须用 \\n 转义。'
-    result = await streamCompletion(ctx, {
+    result = await dshWithPolicy(ctx, {
       provider: route.provider,
       model: route.model,
-      reasoningEffort: (ReasoningEffortId('off')),
-      messages: [mkMessage('user', retryPrompt)],
+      reasoningEffort: ReasoningEffortId('off'),
       system: SYSTEM,
+      messages: [mkMessage('user', retryPrompt)],
       temperature: 0.3,
       maxTokens: 8192,
-    })
+    }, sampling)
     data = parseResult(result)
   }
   const fallback = data === null
@@ -500,15 +567,15 @@ export async function generateCard(ctx: Context, spec: TavernSpec, version: stri
 }
 
 /** Generate world-book entries from the spec or an existing card. */
-export async function generateWorldbook(ctx: Context, spec: TavernSpec, card: CharCard | null, custom?: LlmCustom): Promise<{ entries: unknown[]; rawText: string }> {
+export async function generateWorldbook(ctx: Context, spec: TavernSpec, card: CharCard | null, custom?: LlmCustom, sampling?: TemperaturePolicy): Promise<{ entries: unknown[]; rawText: string }> {
   const prompt = buildWorldbookPrompt(spec, card)
   let text: string
   if (customReady(custom)) {
-    text = (await customComplete(custom, { system: SYSTEM, messages: [{ role: 'user', content: prompt }], temperature: 0.7, maxTokens: 2200 })).text
+    text = (await customWithPolicy(custom, { system: SYSTEM, messages: [{ role: 'user', content: prompt }], temperature: 0.7, maxTokens: 2200 }, sampling)).text
   } else {
     const route = await resolveRoute(ctx)
     const effort = await resolveEffort(ctx, route.provider, route.model, route.reasoningEffort)
-    text = await streamText(ctx, {
+    text = (await dshWithPolicy(ctx, {
       provider: route.provider,
       model: route.model,
       reasoningEffort: effort,
@@ -516,18 +583,18 @@ export async function generateWorldbook(ctx: Context, spec: TavernSpec, card: Ch
       system: SYSTEM,
       temperature: 0.7,
       maxTokens: 4096,
-    })
+    }, sampling)).text
     if (text === '') {
       // Structured JSON again: thinking disabled beats an empty answer.
-      text = await streamText(ctx, {
+      text = (await dshWithPolicy(ctx, {
         provider: route.provider,
         model: route.model,
-        reasoningEffort: (ReasoningEffortId('off')),
+        reasoningEffort: ReasoningEffortId('off'),
         messages: [mkMessage('user', prompt)],
         system: SYSTEM,
         temperature: 0.3,
         maxTokens: 4096,
-      })
+      }, sampling)).text
     }
   }
   const parsed = (extractJson(text) ?? repairJson(text)) as { entries?: unknown } | null
@@ -561,15 +628,15 @@ export async function listModels(ctx: Context): Promise<{ options: { provider: s
 }
 
 /** Produce the character's reply for one chat turn. */
-export async function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string, custom?: LlmCustom): Promise<string> {
+export async function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string, custom?: LlmCustom, sampling?: TemperaturePolicy): Promise<string> {
   const system = buildChatSystem(card, globalPrompt)
   if (customReady(custom) && (provider === undefined || provider === '' || provider === 'custom')) {
-    return (await customComplete(custom, {
+    return (await customWithPolicy(custom, {
       system,
       messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' as const : 'user' as const, content: m.content })),
       temperature: 0.9,
       maxTokens: 600,
-    })).text
+    }, sampling)).text
   }
   const route = await resolveRoute(ctx)
   const p = provider && model ? provider : route.provider
@@ -578,7 +645,7 @@ export async function chatReply(ctx: Context, card: CharCard, messages: ChatMess
   // reply budget on a reasoning-heavy default model, yielding empty turns.
   const effort = await resolveEffort(ctx, p, m, route.reasoningEffort)
   const modelMessages = messages.map((msg) => mkMessage(msg.role === 'assistant' ? 'assistant' : 'user', msg.content, p, m))
-  return streamText(ctx, {
+  return (await dshWithPolicy(ctx, {
     provider: p,
     model: m,
     reasoningEffort: effort,
@@ -586,16 +653,23 @@ export async function chatReply(ctx: Context, card: CharCard, messages: ChatMess
     system,
     temperature: 0.9,
     maxTokens: 1200,
-  })
+  }, sampling)).text
 }
 
 /** Round-trip test of a user-supplied endpoint (settings 「测试连接」). */
-export async function testCustom(custom: LlmCustom): Promise<{ ok: true; latencyMs: number; reply: string }> {
+export async function testCustom(custom: LlmCustom, sampling?: TemperaturePolicy): Promise<{ ok: true; latencyMs: number; reply: string; temperature: string }> {
   const started = Date.now()
-  const result = await customComplete(custom, {
+  const result = await customWithPolicy(custom, {
     messages: [{ role: 'user', content: '请只回复两个字：连接成功' }],
     temperature: 0,
     maxTokens: 20,
-  })
-  return { ok: true, latencyMs: Date.now() - started, reply: result.text.slice(0, 100) }
+  }, sampling)
+  const learned = resolveTemperature(sampling, samplingKey('custom', custom.baseUrl, custom.model), 0)
+  return {
+    ok: true,
+    latencyMs: Date.now() - started,
+    reply: result.text.slice(0, 100),
+    // Surfaced so the settings panel can show "this model pins temperature".
+    temperature: learned === undefined ? '不发送（模型已拒绝该字段）' : String(learned),
+  }
 }

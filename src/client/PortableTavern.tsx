@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 import type * as React from 'react'
 import type { ChatMessage, CharCard, TavernSpec, WorldbookEntry } from '../protocol.ts'
 import { TavernApi } from './api.ts'
-import { loadCustomLlm, saveCustomLlm, clearCustomLlm } from './llm-custom.ts'
+import { loadCustomLlm, saveCustomLlm, clearCustomLlm, loadSampling, saveSampling } from './llm-custom.ts'
 import { css } from './styles.ts'
 
 // ---------------------------------------------------------------------------
@@ -512,6 +512,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   const [tavern, setTavern] = useState(loadTavernSettings)
   const [showTrigger, setShowTrigger] = useState(() => triggerStore.get())
   const [llmDraft, setLlmDraft] = useState(loadCustomLlm)
+  const [sampling, setSampling] = useState(loadSampling)
   const [llmTesting, setLlmTesting] = useState(false)
   const [llmTestResult, setLlmTestResult] = useState('')
   const [bgImage, setBgImage] = useState(loadBgImage)
@@ -614,7 +615,8 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     saveCustomLlm({ baseUrl, apiKey, model })
     setLlmDraft(loadCustomLlm())
     void api.test({ baseUrl, apiKey, model }).then((res) => {
-      setLlmTestResult('连接成功（' + res.latencyMs + 'ms）：' + res.reply)
+      const temp = res.temperature ? '｜采样温度：' + res.temperature : ''
+      setLlmTestResult('连接成功（' + res.latencyMs + 'ms）：' + res.reply + temp)
     }).catch((e) => setLlmTestResult('连接失败：' + (e instanceof Error ? e.message : String(e)))).finally(() => setLlmTesting(false))
   }
 
@@ -1069,6 +1071,36 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
         </Field>
         {llmTestResult ? <div className={css.stNotice}>{llmTestResult}</div> : null}
         <div className={css.stLabel}>API Key 只存在本机浏览器 localStorage，仅发送给本机酒馆路由转发请求，不写入任何日志；聊天页的模型下拉中选择「自定义」即可切换到该接口。</div>
+      </Section>
+      <Section title="采样温度" hint="修复部分模型固定 temperature 导致的 400 报错">
+        <Field label="发送方式">
+          <RadioGroup
+            options={[
+              { value: 'auto', label: '自动（推荐）' },
+              { value: 'fixed', label: '固定数值' },
+              { value: 'omit', label: '不发送该字段' },
+            ]}
+            value={sampling.mode}
+            onChange={(v) => { const next = { ...sampling, mode: v as 'auto' | 'fixed' | 'omit' }; setSampling(next); saveSampling(next) }}
+          />
+        </Field>
+        {sampling.mode === 'fixed'
+          ? (
+            <Field label={'温度值：' + sampling.value.toFixed(2)}>
+              <Slider
+                min={0}
+                max={2}
+                value={sampling.value}
+                left="稳定"
+                right="发散"
+                onChange={(v) => { const next = { ...sampling, value: v }; setSampling(next); saveSampling(next) }}
+              />
+            </Field>
+          )
+          : null}
+        <div className={css.stLabel}>
+          自动模式按每次任务给出默认温度（角色卡 0.85 / 世界书 0.7 / 聊天 0.9）。若某个模型只接受固定温度（例如 KIMI K3 只允许 1）或直接拒绝该字段，宿主会从上游报错里读出限制并自动记住，接下来对该模型一律按限制发送，用户不会再看到这条 400。选择「不发送」可手动强制省略。
+        </div>
       </Section>
       <Section title="本地音乐" defaultOpen>
         <Field label="本地音乐（支持文件夹、按顺序播放）">

@@ -9,13 +9,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import {
+  DEFAULT_TEMPERATURE_POLICY,
   TAVERN_API,
   type ApiErrorBody,
   type CharCard,
   type ChatMessage,
   type LlmCustom,
   type TavernSpec,
+  type TemperaturePolicy,
 } from './protocol.ts'
+import { temperatureReport } from './temperature.ts'
 import { chatReply, generateCard, generateWorldbook, listModels, testCustom } from './llm.ts'
 
 /** Cap on JSON request bodies (specs and chat histories are small). */
@@ -32,6 +35,23 @@ function readCustom(body: Record<string, unknown> | undefined): LlmCustom | unde
   if (baseUrl === '' || apiKey === '' || model === '') return undefined
   if (baseUrl.length > 2000 || apiKey.length > 500 || model.length > 200) return undefined
   return { baseUrl, apiKey, model }
+}
+
+/**
+ * Read the sampling policy from a request body (issue #1). Anything malformed
+ * falls back to the default, so an old browser bundle keeps working.
+ * @param body - the parsed JSON request body.
+ */
+function readSampling(body: Record<string, unknown> | undefined): TemperaturePolicy {
+  const raw = body?.sampling
+  if (typeof raw !== 'object' || raw === null) return DEFAULT_TEMPERATURE_POLICY
+  const record = raw as Record<string, unknown>
+  const mode = record.mode
+  if (mode !== 'auto' && mode !== 'fixed' && mode !== 'omit') return DEFAULT_TEMPERATURE_POLICY
+  const value = typeof record.value === 'number' && Number.isFinite(record.value)
+    ? Math.min(2, Math.max(0, record.value))
+    : DEFAULT_TEMPERATURE_POLICY.value
+  return { mode, value }
 }
 
 /** Loopback literal check plus browser same-origin markers. */
@@ -133,7 +153,7 @@ export function makeRoutes(ctx: Context): WebRoute[] {
         const spec = body.spec as TavernSpec
         const version = body.version === 'v3' ? 'v3' : 'v2'
         try {
-          const { card, rawText, fallback } = await generateCard(ctx, spec, version, readCustom(body))
+          const { card, rawText, fallback } = await generateCard(ctx, spec, version, readCustom(body), readSampling(body))
           writeJson(res, 200, { card, rawText, fallback })
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))
@@ -157,7 +177,7 @@ export function makeRoutes(ctx: Context): WebRoute[] {
         const spec = body.spec as TavernSpec
         const card = (body.card === null || body.card === undefined ? null : looksLikeCard(body.card) ? body.card as CharCard : null)
         try {
-          const { entries, rawText } = await generateWorldbook(ctx, spec, card, readCustom(body))
+          const { entries, rawText } = await generateWorldbook(ctx, spec, card, readCustom(body), readSampling(body))
           writeJson(res, 200, { entries, rawText })
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))
@@ -171,7 +191,7 @@ export function makeRoutes(ctx: Context): WebRoute[] {
         if (!guard(req, res, 'GET')) return
         try {
           const { options, current } = await listModels(ctx)
-          writeJson(res, 200, { options, current })
+          writeJson(res, 200, { options, current, learnedTemperatures: temperatureReport() })
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))
         }
@@ -197,7 +217,7 @@ export function makeRoutes(ctx: Context): WebRoute[] {
         const model = typeof body.model === 'string' ? body.model : undefined
         const globalPrompt = typeof body.globalPrompt === 'string' ? body.globalPrompt : undefined
         try {
-          const reply = await chatReply(ctx, card, messages, provider, model, globalPrompt, readCustom(body))
+          const reply = await chatReply(ctx, card, messages, provider, model, globalPrompt, readCustom(body), readSampling(body))
           writeJson(res, 200, { reply })
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))
@@ -216,7 +236,7 @@ export function makeRoutes(ctx: Context): WebRoute[] {
           return
         }
         try {
-          const result = await testCustom(custom)
+          const result = await testCustom(custom, readSampling(body))
           writeJson(res, 200, result)
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))
