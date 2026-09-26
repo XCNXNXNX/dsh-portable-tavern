@@ -20,7 +20,7 @@
  * - __selftest.mjs  纯逻辑自检（node --experimental-strip-types 直接跑）
  */
 
-// ---- 公共类型 ----
+/** 公共类型：酒馆面板与扩展都用到的契约类型。 */
 export type {
   StExtensionSource,
   StHost,
@@ -32,16 +32,19 @@ export type {
   StToastr,
 } from './types.ts'
 
-// ---- 宿主 ----
+/** 宿主工厂与持久化键。 */
 export { ST_METADATA_KEY, ST_SETTINGS_KEY, createStHost } from './host.ts'
 
-// ---- 事件总线 ----
+/** eventSource 复刻与事件常量表。 */
 export { REPLAY_EVENTS, StEventSource, createEventSource, event_types, eventTypes } from './emitter.ts'
+/** 事件监听器与记录类型。 */
 export type { StEventListener, StListenerRecord } from './emitter.ts'
 
-// ---- libs ----
+/** libs 装配：DOMPurify / storage / css。 */
 export { createCssLib, createDOMPurify, createMemoryStorage, createStLibs, resolveStorage } from './libs.ts'
+/** libs 的类型面。 */
 export type { StCssLib, StDOMPurify, StFuseConstructor, StLibs } from './libs.ts'
+/** 纯逻辑库实现（lodash 子集 / Handlebars 子集 / Fuse / Bowser / hljs / localforage / sanitize 降级）。 */
 export {
   baseIteratee,
   cloneDeep,
@@ -67,6 +70,7 @@ export {
   toPath,
   toStringValue,
 } from './libs-pure.ts'
+/** 纯逻辑库的类型面。 */
 export type {
   StBowser,
   StBowserParser,
@@ -86,7 +90,7 @@ export type {
   StUaInfo,
 } from './libs-pure.ts'
 
-// ---- DOM 骨架 ----
+/** DOM 骨架（挂载点 / 镜像 / toast / 主题变量）与加载期归属追踪。 */
 export {
   PT_EXT_MOUNT_ID,
   ST_EXT_DOCK_ID,
@@ -109,13 +113,15 @@ export {
   showToast,
   syncChatMirror,
 } from './dom.ts'
+/** DOM 骨架的类型面。 */
 export type { StDomWatcher, StSkeleton, StSkeletonOptions } from './dom.ts'
 
-// ---- 迷你 jQuery ----
+/** 迷你 jQuery（window.$ / window.jQuery 的实体）。 */
 export { createJQuery } from './jquery.ts'
+/** 迷你 jQuery 的类型面。 */
 export type { StAjaxOptions, StJQueryCollection, StJQueryStatic, StJQueryXhr } from './jquery.ts'
 
-// ---- 斜杠命令 / 弹窗 ----
+/** 斜杠命令注册表与弹窗常量（P2）。 */
 export {
   ARGUMENT_TYPE,
   POPUP_RESULT,
@@ -126,6 +132,7 @@ export {
   createSlashCommandParser,
   makeSlashCommand,
 } from './slash.ts'
+/** 斜杠命令 / 弹窗的类型面。 */
 export type {
   StPopupClass,
   StPopupInstance,
@@ -136,6 +143,7 @@ export type {
   StSlashCommandParserFace,
 } from './slash.ts'
 
-// ---- context ----
+/** getContext() 的构造函数与辅助。 */
 export { createAccountStorage, createPowerUser, createStContext, estimateTokens } from './context.ts'
+/** context 的类型面。 */
 export type { StCharacter, StContext, StContextDeps, StContextHandle } from './context.ts'

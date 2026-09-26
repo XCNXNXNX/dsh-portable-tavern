@@ -808,6 +808,24 @@ function parseTemplate(src: string): HbNode[] {
   return root
 }
 
+/** Handlebars 值 -> 字符串（SafeString 走 toHTML，数组按 JS 语义逗号连接）。 */
+function stringifyValue(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'object') {
+    if (typeof (value as { toHTML?: unknown }).toHTML === 'function') {
+      try { return String((value as { toHTML(): string }).toHTML()) } catch { return '' }
+    }
+    if (Array.isArray(value)) return value.map((item) => stringifyValue(item)).join(',')
+    return String(value)
+  }
+  return String(value)
+}
+
+/** 是否是 SafeString（{{{ }}} 语义：不再转义）。 */
+function isSafeString(value: unknown): boolean {
+  return !!value && typeof value === 'object' && typeof (value as { toHTML?: unknown }).toHTML === 'function'
+}
+
 /** Handlebars 的假值规则（空数组也算假）。 */
 function hbIsFalsy(value: unknown): boolean {
   if (value === false || value === null || value === undefined) return true
@@ -875,13 +893,17 @@ function renderNodes(nodes: HbNode[], stack: HbFrame[], helpers: Record<string, 
     if (node.kind === 'var') {
       const expr = (node.expr || '').trim()
       const words = splitTokens(expr)
-      if (words.length > 1 && helpers[words[0]]) {
+      const helperName = words[0]
+      // 单名 mustache 也会命中已注册 helper（与 Handlebars 一致）；this./@ 前缀除外
+      const useHelper = !!helpers[helperName] && expr.charAt(0) !== '.' && expr.charAt(0) !== '@' && expr.indexOf('this.') !== 0
+      if (useHelper) {
         const args = words.slice(1).map((w) => resolveRef(w, stack))
-        out += toStringValue(helpers[words[0]].apply(stack[stack.length - 1].data, args))
+        const produced = helpers[helperName].apply(stack[stack.length - 1].data, args)
+        out += node.raw || isSafeString(produced) ? stringifyValue(produced) : escapeHtml(produced)
         continue
       }
       const value = resolveRef(expr, stack)
-      out += node.raw ? toStringValue(value) : escapeHtml(value)
+      out += node.raw || isSafeString(value) ? stringifyValue(value) : escapeHtml(value)
       continue
     }
     const name = node.name || ''
@@ -942,7 +964,7 @@ function renderNodes(nodes: HbNode[], stack: HbFrame[], helpers: Record<string, 
         data: stack[stack.length - 1].locals,
       }
       try {
-        out += toStringValue(helpers[name].call(stack[stack.length - 1].data, resolveRef(argExpr, stack), options))
+        out += stringifyValue(helpers[name].call(stack[stack.length - 1].data, resolveRef(argExpr, stack), options))
       } catch (e) {
         try { console.error('[portable-tavern/st] Handlebars 块助手异常: ' + name, e) } catch { /* 无 console */ }
       }

@@ -140,8 +140,9 @@ test('APP_READY / APP_INITIALIZED 自动补发：晚注册的监听器立刻拿�
   bus.once(event_types.APP_INITIALIZED, (...args) => { onceGot.push(args) })
   assert.deepEqual(onceGot, [], '没 emit 过的补发事件不应触发')
   await bus.emit(event_types.APP_INITIALIZED, 'init')
+  assert.deepEqual(onceGot, [['init']], '正常 emit 会触发已注册的 once')
   bus.once(event_types.APP_INITIALIZED, (...args) => { onceGot.push(args) })
-  assert.deepEqual(onceGot, [['init']], 'once 的补发只调用一次')
+  assert.deepEqual(onceGot, [['init'], ['init']], 'once 的补发只多调用一次')
   assert.equal(bus.listenerCount(event_types.APP_INITIALIZED), 0, 'once 补发后不应留在监听表里')
   const plain = []
   await bus.emit('some_other_event', 1)
@@ -196,7 +197,7 @@ test('onAny 收到事件名 + 参数；emitAndWait 收集返回值；emit 期间
   const results = await bus.emitAndWait('sum', 'x')
   assert.deepEqual(results.slice(0, 2), [1, 2])
   assert.equal(late, 0, 'emit 期间注册的监听器不应参与本轮')
-  assert.deepEqual(anySeen, [['sum', ['x']], ['sum', ['x']], ['sum', ['x']]])
+  assert.deepEqual(anySeen, [['sum', ['x']]], 'onAny 每次 emit 调用一次（参数是事件名 + 原参数）')
   await bus.emit('sum', 'y')
   assert.equal(late, 1, '下一轮应触发')
   bus.offAny(anySeen.handler || (() => {}))
@@ -274,7 +275,7 @@ test('Handlebars：registerHelper 与 SafeString', () => {
   assert.equal(hb.compile('{{#bold name}}{{this}}!{{/bold}}')({ name: 'x' }), '<b>x!</b>')
   hb.registerHelper('raw', () => new hb.SafeString('<i>i</i>'))
   assert.equal(hb.compile('{{{raw}}}')({}), '<i>i</i>')
-  assert.equal(hb.compile('{{raw}}')({}), '&lt;i&gt;i&lt;/i&gt;', 'SafeString 默认仍会被转义（本子集如此）')
+  assert.equal(hb.compile('{{raw}}')({}), '<i>i</i>', 'SafeString 与 {{{ }}} 一样不转义')
   assert.equal(hb.compile('{{#if x}}')[0] === undefined ? typeof hb.compile('') : 'fn', 'function')
 })
 
@@ -290,7 +291,9 @@ test('lodash：get / set / has 支持路径与数组下标', () => {
   assert.equal(_.get(obj, 'a.x.y', '默认'), '默认')
   const target = {}
   _.set(target, 'a.b[1].c', 9)
-  assert.deepEqual(target, { a: { b: [undefined, { c: 9 }] } })
+  assert.equal(target.a.b.length, 2, 'set 会自动建数组')
+  assert.equal(target.a.b[1].c, 9)
+  assert.equal(0 in target.a.b, false, '空洞与 lodash 行为一致')
   assert.equal(_.has(obj, 'a.b[0].c'), true)
   assert.equal(_.has(obj, 'a.zzz'), false)
 })
@@ -334,7 +337,7 @@ test('lodash：foreach / map / filter / find / uniqBy / sortBy / groupBy / keyBy
 
 test('lodash：字符串与数值工具', () => {
   const _ = lodashSubset
-  assert.equal(_.escape('<a href="x">&"), '&lt;a href&#x3D;&quot;x&quot;&gt;&amp;')
+  assert.equal(_.escape("<a href='x'>&"), '&lt;a href&#x3D;&#x27;x&#x27;&gt;&amp;')
   assert.equal(_.kebabCase('Foo Bar_baz'), 'foo-bar-baz')
   assert.equal(_.startCase('fooBar baz'), 'Foo Bar Baz')
   assert.equal(_.camelCase('foo-bar baz'), 'fooBarBaz')
@@ -430,9 +433,11 @@ test('Fuse 子集：按 keys 搜索并排序', () => {
   const Fuse = createFuseClass()
   const fuse = new Fuse([{ name: 'Alice' }, { name: 'Bob' }, { name: 'Alicia' }], { keys: ['name'] })
   const hits = fuse.search('alice')
-  assert.equal(hits.length, 2)
+  assert.equal(hits.length, 1, 'Fuse 语义：查询字符必须全部命中（Alicia 没有 e）')
   assert.equal(hits[0].item.name, 'Alice', '完全命中应排第一')
-  assert.ok(hits[0].score <= hits[1].score)
+  const prefixHits = fuse.search('ali')
+  assert.equal(prefixHits.length, 2)
+  assert.ok(prefixHits[0].score <= prefixHits[1].score)
   assert.deepEqual(fuse.search('zzz'), [])
   assert.equal(fuse.search('', { limit: 1 }).length, 1)
   fuse.add({ name: 'Carol' })

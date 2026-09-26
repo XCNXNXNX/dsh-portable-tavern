@@ -46,7 +46,7 @@ export const ST_STYLE_ID = 'dsh-portable-tavern-st'
 export const ST_LOADER_ID = 'tavern-st-loader'
 
 /** 需要快照/清理的挂载点 id（unload 时只清这些容器里的新增子节点）。 */
-export const TRACKED_MOUNT_IDS = ['extensions_settings', 'extensions_settings2', 'extensionsMenu', 'movingDivs', 'chat']
+export const TRACKED_MOUNT_IDS = ['extensions_settings', 'extensions_settings2', 'extensionsMenu', 'movingDivs']
 
 /** 骨架引用集合（宿主内部使用）。 */
 export interface StSkeleton {
@@ -190,10 +190,13 @@ function mk<K extends keyof HTMLElementTagNameMap>(tag: K, id?: string, classNam
   return node
 }
 
-/** 取一个已存在的元素，没有就按需创建并挂到 parent。 */
-function ensure(id: string, parent: Element, tag?: string, className?: string): HTMLElement {
+/** 取一个已存在的元素，没有就按需创建并挂到 parent（外部同名节点沿用并告警一次）。 */
+function ensure(id: string, parent: Element, tag?: string, className?: string, onWarn?: (message: string) => void): HTMLElement {
   const found = document.getElementById(id)
-  if (found) return found
+  if (found) {
+    if (!parent.contains(found) && onWarn) onWarn('页面已有 #' + id + '（不是兼容宿主建的），沿用该节点作为挂载点')
+    return found
+  }
   const node = document.createElement(tag || 'div')
   node.id = id
   if (className) node.className = className
@@ -245,19 +248,19 @@ export function installSkeleton(options: StSkeletonOptions): StSkeleton {
     head.appendChild(style)
   }
   // 2) 隐藏骨架
-  const root = ensure(ST_ROOT_ID, body, 'div')
-  const sendForm = ensure('send_form', root, 'div')
+  const root = ensure(ST_ROOT_ID, body, 'div', undefined, options.onWarn)
+  const sendForm = ensure('send_form', root, 'div', undefined, options.onWarn)
   let sendTextarea = document.getElementById('send_textarea') as HTMLTextAreaElement | null
   if (!sendTextarea) {
     sendTextarea = mk('textarea', 'send_textarea') as HTMLTextAreaElement
     sendTextarea.rows = 2
     sendForm.appendChild(sendTextarea)
   }
-  const messageTemplate = ensure('message_template', root, 'div')
-  const customCss = ensure('customCSS', root, 'style') as HTMLStyleElement
-  const rightNavPanel = ensure('right-nav-panel', root, 'div')
-  const leftNavPanel = ensure('left-nav-panel', root, 'div')
-  const topSettingsHolder = ensure('top-settings-holder', root, 'div')
+  const messageTemplate = ensure('message_template', root, 'div', undefined, options.onWarn)
+  const customCss = ensure('customCSS', root, 'style', undefined, options.onWarn) as HTMLStyleElement
+  const rightNavPanel = ensure('right-nav-panel', root, 'div', undefined, options.onWarn)
+  const leftNavPanel = ensure('left-nav-panel', root, 'div', undefined, options.onWarn)
+  const topSettingsHolder = ensure('top-settings-holder', root, 'div', undefined, options.onWarn)
   // 3) 可见扩展面板
   let extPanel = document.getElementById(ST_EXT_PANEL_ID)
   if (!extPanel) {
@@ -295,8 +298,8 @@ export function installSkeleton(options: StSkeletonOptions): StSkeleton {
   extPanel.appendChild(extHead)
   extPanel.appendChild(extBody)
   // 4) toast / loader / 主题变量
-  const toasts = ensure(ST_TOASTS_ID, body, 'div')
-  const loader = ensure(ST_LOADER_ID, body, 'div')
+  const toasts = ensure(ST_TOASTS_ID, body, 'div', undefined, options.onWarn)
+  const loader = ensure(ST_LOADER_ID, body, 'div', undefined, options.onWarn)
   if (!loader.firstChild) {
     const box = mk('div', undefined, 'tavern-st-loader-box')
     box.textContent = '正在加载扩展…'
@@ -401,6 +404,8 @@ export function disposeSkeleton(skel: StSkeleton): void {
   for (const node of skel.owned) {
     try { if (node.parentNode) node.parentNode.removeChild(node) } catch { /* 忽略 */ }
   }
+  const dock = document.getElementById(ST_EXT_DOCK_ID)
+  if (dock && dock.parentNode) { try { dock.parentNode.removeChild(dock) } catch { /* 忽略 */ } }
   for (const id of [ST_THEME_VARS_ID, ST_STYLE_ID]) {
     const node = document.getElementById(id)
     try { if (node && node.parentNode) node.parentNode.removeChild(node) } catch { /* 忽略 */ }
@@ -438,15 +443,11 @@ function mesHtml(msg: StMessage, index: number, mirror: StMirror, sanitize: (htm
 
 /** 计算镜像签名：变了才重建 DOM（避免每帧重排）。 */
 function chatSignatureOf(chat: StMessage[], name1: string, name2: string): string {
-  const last = chat.length > 0 ? chat[chat.length - 1] : null
-  const first = chat.length > 0 ? chat[0] : null
-  return [
-    String(chat.length),
-    name1,
-    name2,
-    first ? String(first.mes || '').length + ':' + String(first.mes || '').slice(0, 24) : '',
-    last ? String(last.mes || '').length + ':' + String(last.mes || '').slice(0, 24) : '',
-  ].join('|')
+  const shape = chat.map((msg) => {
+    const text = msg && typeof msg.mes === 'string' ? msg.mes : ''
+    return (msg && msg.is_user ? 'u' : 'a') + text.length
+  }).join(',')
+  return [String(chat.length), name1, name2, shape].join('|')
 }
 
 /**
