@@ -546,7 +546,16 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   /** Where to seek once the next track's metadata arrives. */
   const seekRef = useRef(0)
   const positionRef = useRef(0)
+  /** Whether the element is producing sound right now. */
   const playingRef = useRef(false)
+  /**
+   * Whether the user wants sound. Kept apart from playingRef because changing
+   * track tears the source down (which pauses the element) and that pause must
+   * not be mistaken for the user pressing pause.
+   */
+  const wantPlayRef = useRef(false)
+  /** True while a track is being swapped in. */
+  const loadingRef = useRef(false)
   const indexRef = useRef(0)
 
   const patch = (key: keyof TavernSpec, value: unknown): void => setSpec((prev) => ({ ...prev, [key]: value }))
@@ -573,6 +582,9 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       const saved = loadMusicState()
       setCurrentIndex(Math.min(saved.index, tracks.length - 1))
       seekRef.current = saved.position
+      // Resume the intent as well: restoring the position but not "was playing"
+      // is why reopening the tavern came back silent.
+      wantPlayRef.current = saved.playing
     })
   }, [])
   useEffect(() => {
@@ -623,6 +635,58 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   }, [storageIssue])
 
   useEffect(() => { indexRef.current = Math.max(0, currentIndex) }, [currentIndex])
+
+  /**
+   * Browsers refuse to start audio before the page has been interacted with.
+   * If the saved state says "playing", try again on the first gesture instead
+   * of silently staying mute.
+   */
+  useEffect(() => {
+    const retry = (): void => {
+      const el = audioRef.current
+      if (el !== null && wantPlayRef.current && el.paused && el.getAttribute('src') !== null) {
+        void el.play().catch(() => undefined)
+      }
+    }
+    document.addEventListener('pointerdown', retry)
+    document.addEventListener('keydown', retry)
+    return () => {
+      document.removeEventListener('pointerdown', retry)
+      document.removeEventListener('keydown', retry)
+    }
+  }, [])
+
+  /**
+   * Swap the source in place instead of remounting the element.
+   *
+   * `key={currentIndex}` used to remount <audio> on every track change, and the
+   * teardown pause arrived after the new element mounted -- so advancing a
+   * track stopped the music dead.
+   */
+  useEffect(() => {
+    const el = audioRef.current
+    const item = currentIndex >= 0 && currentIndex < playlist.length ? playlist[currentIndex] : null
+    if (el === null || item === null) return
+    const seek = seekRef.current
+    const resume = wantPlayRef.current
+    seekRef.current = 0
+    loadingRef.current = true
+    const onMeta = (): void => {
+      loadingRef.current = false
+      if (seek > 0 && Number.isFinite(el.duration) && seek < el.duration) {
+        try { el.currentTime = seek } catch { /* ignore */ }
+      }
+      if (resume) void el.play().catch(() => undefined)
+      el.removeEventListener('loadedmetadata', onMeta)
+    }
+    el.addEventListener('loadedmetadata', onMeta)
+    el.src = item.url
+    el.load()
+    return () => {
+      loadingRef.current = false
+      el.removeEventListener('loadedmetadata', onMeta)
+    }
+  }, [currentIndex, playlist])
 
   /**
    * Keep the playback position on disk. A periodic tick covers long listening,
@@ -902,9 +966,25 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     saveMusic(list.map((x) => ({ id: x.id, name: x.name, blob: x.blob as Blob })))
   }
 
-  const nextTrack = (): void => setCurrentIndex((i) => (playlist.length ? (i + 1) % playlist.length : -1))
-  const prevTrack = (): void => setCurrentIndex((i) => (playlist.length ? (i - 1 + playlist.length) % playlist.length : -1))
-  const stopMusic = (): void => { setPlaylist([]); setCurrentIndex(-1); saveMusic([]) }
+  /** Advancing deliberately means the user wants to hear the next one. */
+  const nextTrack = (): void => {
+    wantPlayRef.current = true
+    positionRef.current = 0
+    setCurrentIndex((i) => (playlist.length ? (i + 1) % playlist.length : -1))
+  }
+  const prevTrack = (): void => {
+    wantPlayRef.current = true
+    positionRef.current = 0
+    setCurrentIndex((i) => (playlist.length ? (i - 1 + playlist.length) % playlist.length : -1))
+  }
+  const stopMusic = (): void => {
+    wantPlayRef.current = false
+    playingRef.current = false
+    saveMusicState({ index: 0, position: 0, playing: false })
+    setPlaylist([])
+    setCurrentIndex(-1)
+    saveMusic([])
+  }
 
   const applyImportedCard = (obj: unknown): void => {
     const cardObj = (obj && typeof obj === 'object' && 'spec' in obj && 'data' in obj ? obj : { spec: 'chara_card_v2', spec_version: '2.0', data: obj }) as CharCard
@@ -1557,29 +1637,21 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
         ? (
           <div className={css.stMusicBar}>
             <audio
-              key={currentIndex}
               ref={audioRef}
               className={css.stAudio}
-              src={track.url}
               controls
-              onLoadedMetadata={(e) => {
-                const el = e.currentTarget
-                // Resume mid-track; autoplay is driven by what the user was
-                // doing last time rather than being unconditional.
-                if (seekRef.current > 0 && Number.isFinite(el.duration) && seekRef.current < el.duration) {
-                  try { el.currentTime = seekRef.current } catch { /* ignore */ }
-                }
-                seekRef.current = 0
-                if (playingRef.current) void el.play().catch(() => undefined)
-              }}
               onTimeUpdate={(e) => { positionRef.current = e.currentTarget.currentTime }}
               onPlay={() => {
                 playingRef.current = true
+                wantPlayRef.current = true
                 saveMusicState({ index: indexRef.current, position: positionRef.current, playing: true })
               }}
               onPause={() => {
                 playingRef.current = false
-                saveMusicState({ index: indexRef.current, position: positionRef.current, playing: false })
+                // A pause caused by swapping in the next track is not the user
+                // asking for silence.
+                if (!loadingRef.current) wantPlayRef.current = false
+                saveMusicState({ index: indexRef.current, position: positionRef.current, playing: wantPlayRef.current })
               }}
               onEnded={nextTrack}
             />

@@ -44,6 +44,7 @@ const TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
   '.woff2': 'font/woff2',
 }
 
@@ -82,12 +83,20 @@ const server = createServer((req, res) => {
 })
 
 /** Tabs worth a picture, with the window size that frames the panel. */
+/**
+ * The window is a little wider than the panel so the panel reads as a panel,
+ * and the panel is configured the way the maintainer actually runs it: glass
+ * theme, the Dcat wallpaper, and a widened panel.
+ */
+const PANEL_WIDTH = Number(process.env.PT_WIDTH || 760)
+const THEME = process.env.PT_THEME || 'glass'
+
 const SHOTS = [
-  { name: 'chat', tab: 'chat', width: 560, height: 940 },
-  { name: 'adventure', tab: 'rpg', width: 560, height: 1040 },
-  { name: 'party', tab: 'party', width: 560, height: 1040 },
-  { name: 'themes', tab: 'plugins', width: 560, height: 1040 },
-  { name: 'character', tab: 'character', width: 560, height: 940 },
+  { name: 'chat', tab: 'chat', width: PANEL_WIDTH + 60, height: 1000 },
+  { name: 'adventure', tab: 'rpg', width: PANEL_WIDTH + 60, height: 1120 },
+  { name: 'party', tab: 'party', width: PANEL_WIDTH + 60, height: 1120 },
+  { name: 'themes', tab: 'plugins', width: PANEL_WIDTH + 60, height: 1120 },
+  { name: 'character', tab: 'character', width: PANEL_WIDTH + 60, height: 1000 },
 ]
 
 await new Promise((done) => server.listen(0, '127.0.0.1', done))
@@ -119,6 +128,7 @@ for (const shot of SHOTS) {
   const startedAt = Date.now()
   const profile = join(tmpdir(), 'pt-shot-' + shot.name + '-' + process.pid)
   const url = 'http://127.0.0.1:' + port + '/docs/preview/preview.html?tab=' + shot.tab
+    + '&theme=' + THEME + '&width=' + PANEL_WIDTH
   // Edge's launcher hands off to a child process and returns immediately, so
   // neither the exit code nor a synchronous wait says anything. Spawn it
   // detached and wait for the file this run actually wrote.

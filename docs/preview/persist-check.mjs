@@ -63,7 +63,9 @@ async function pass(phase) {
   const child = spawn(browser, [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--disable-extensions', '--user-data-dir=' + profile,
-    '--virtual-time-budget=12000', url,
+    // Generous: the harness fetches its fixtures (including a 1.9 MB wallpaper)
+    // before it boots, and the probe then waits on two timers and IndexedDB.
+    '--virtual-time-budget=45000', url,
   ], { detached: true, stdio: 'ignore' })
   child.unref()
   // Wait for the *result* line, not merely any line: the page also pings on
