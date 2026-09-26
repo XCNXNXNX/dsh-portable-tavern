@@ -50,6 +50,16 @@ export declare function saveParties(list: Party[]): void;
 export declare function loadActivePartyId(): string;
 /** Remember which team is on the table. */
 export declare function saveActivePartyId(id: string): void;
+/**
+ * The team currently on the table, saved continuously.
+ *
+ * The team library is for deliberate saves; this is the working copy, so a user
+ * who never presses 保存到队伍库 still gets their edits back after a reload.
+ * @returns the working team, or null when nothing has been saved yet.
+ */
+export declare function loadCurrentParty(): Party | null;
+/** Persist the working team. */
+export declare function saveCurrentParty(party: Party): void;
 /** The in-progress adventure. */
 export declare function loadRpgState(): RpgState | null;
 /** Persist the in-progress adventure. */

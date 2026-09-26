@@ -11,7 +11,9 @@ import {
   type CheckResult,
   type Encounter,
   type GenerateResponse,
+  type MemberChatResponse,
   type ModelsResponse,
+  type OutlineDraftResponse,
   type PartyMember,
   type PendingCheck,
   type RpgCheckResponse,
@@ -19,6 +21,7 @@ import {
   type RpgNarrateResponse,
   type RpgState,
   type RpgTurnResponse,
+  type ScenarioDraftResponse,
   type StExtension,
   type StInstallResponse,
   type TavernSpec,
@@ -166,6 +169,50 @@ export class TavernApi {
         model: globalRoute?.provider === 'custom' ? undefined : globalRoute?.model,
         custom: globalRoute?.provider === 'custom' ? customLlmPayload() : undefined,
       },
+      sampling: loadSampling(),
+    })
+  }
+
+/** One turn of a private conversation with a party member. */
+  async chatMember(
+    member: PartyMember,
+    messages: ChatMessage[],
+    adventure: { scene: string; beat: string; encounter: { title: string; description: string; options: string[] } | null } | undefined,
+    globalRoute?: { provider?: string; model?: string },
+  ): Promise<MemberChatResponse> {
+    return post<MemberChatResponse>(TAVERN_API.chatMember, {
+      member,
+      messages,
+      adventure,
+      inherit: {
+        provider: globalRoute?.provider === 'custom' ? undefined : globalRoute?.provider,
+        model: globalRoute?.provider === 'custom' ? undefined : globalRoute?.model,
+        custom: globalRoute?.provider === 'custom' ? customLlmPayload() : undefined,
+      },
+      sampling: loadSampling(),
+    })
+  }
+
+  /** Let the AI draft an adventure scenario from the party. */
+  async rpgScenario(party: PartyMember[], hint: string, provider?: string, model?: string): Promise<ScenarioDraftResponse> {
+    const useCustom = provider === undefined || provider === '' || provider === 'custom'
+    return post<ScenarioDraftResponse>(TAVERN_API.rpgScenario, {
+      party, hint,
+      provider: useCustom ? undefined : provider,
+      model: useCustom ? undefined : model,
+      custom: useCustom ? customLlmPayload() : undefined,
+      sampling: loadSampling(),
+    })
+  }
+
+  /** Let the AI draft outline beats whose triggers the system can evaluate. */
+  async rpgOutline(party: PartyMember[], premise: string, count: number, provider?: string, model?: string): Promise<OutlineDraftResponse> {
+    const useCustom = provider === undefined || provider === '' || provider === 'custom'
+    return post<OutlineDraftResponse>(TAVERN_API.rpgOutline, {
+      party, premise, count,
+      provider: useCustom ? undefined : provider,
+      model: useCustom ? undefined : model,
+      custom: useCustom ? customLlmPayload() : undefined,
       sampling: loadSampling(),
     })
   }

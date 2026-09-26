@@ -9,8 +9,9 @@
  * already-decided fact it may only describe.
  */
 import type { Context } from '@deepseek-ai/cordis';
-import type { Encounter, EncounterOption, PartyMember, PendingCheck, RpgMemberRequest, RpgMemberResponse, RpgNarrateRequest, RpgNarrateResponse, RpgState, RpgTurnRequest, RpgTurnResponse } from '../protocol.ts';
+import { type Encounter, type EncounterOption, type MemberChatRequest, type MemberChatResponse, type OutlineDraftRequest, type OutlineDraftResponse, type PartyMember, type PendingCheck, type RpgMemberRequest, type RpgMemberResponse, type RpgNarrateRequest, type RpgNarrateResponse, type RpgState, type RpgTurnRequest, type RpgTurnResponse, type ScenarioDraftRequest, type ScenarioDraftResponse } from '../protocol.ts';
 import { type AttrId } from './engine.ts';
+import { type FiredBeat, type TriggerContext } from './outline.ts';
 /** The GM's standing instruction. */
 export declare const GM_SYSTEM: string;
 /** The structured turn the GM must produce. */
@@ -233,12 +234,33 @@ export declare function coerceOption(raw: unknown, index: number): EncounterOpti
 export declare function coerceEncounter(raw: unknown, fallbackThreat?: number): Encounter | null;
 /** Turn a model-emitted check request into a safe option, or null. */
 export declare function coerceCheck(raw: unknown): EncounterOption | null;
+/**
+ * Build the state a trigger is allowed to read.
+ * @param state - the adventure so far.
+ * @param action - what the player just declared, if anything.
+ */
+export declare function triggerContext(state: RpgState, action: string): TriggerContext;
+/**
+ * Run the outline and mark what fired. Retired beats are removed from the
+ * pending set so a `once` beat never repeats.
+ * @param state - the adventure so far.
+ * @param action - what the player just declared.
+ * @param party - the party, for the hit-point trigger.
+ */
+export declare function fireOutline(state: RpgState, action: string, party: PartyMember[]): {
+    fired: FiredBeat[];
+    firedBeats: string[];
+};
+/** Render the beats that must be staged now, for the narrator's prompt. */
+export declare function firedBlock(fired: FiredBeat[]): string;
+/** Render the premise / tone / rules for any narrator prompt. */
+export declare function setupBlock(state: RpgState): string;
 /** Render one party member's sheet for the GM prompt. */
 export declare function describeParty(party: PartyMember[]): string;
 /** Render the recent adventure log for the GM prompt. */
 export declare function recentLog(state: RpgState, limit: number): string;
 /** The opening instruction for a turn. */
-export declare function buildTurnPrompt(req: RpgTurnRequest, member?: PartyMember | null): string;
+export declare function buildTurnPrompt(req: RpgTurnRequest, member?: PartyMember | null, fired?: FiredBeat[]): string;
 /**
  * One narrative turn: the GM either advances the story, or asks the system to
  * arbitrate. Nothing here decides success -- it only shapes the request.
@@ -264,5 +286,145 @@ export declare function memberSystem(member: PartyMember, state: RpgState, narra
  * @param req - the member, the current scene and the beat they react to.
  */
 export declare function memberLine(ctx: Context, req: RpgMemberRequest): Promise<RpgMemberResponse>;
+/** Schema for one party member's chat reply. */
+export declare const MEMBER_CHAT_TOOL: {
+    name: string;
+    description: string;
+    parameters: {
+        type: string;
+        properties: {
+            reply: {
+                type: string;
+                description: string;
+            };
+        };
+        required: string[];
+    };
+};
+/**
+ * One turn of a private conversation with a party member.
+ *
+ * This is what makes the party feel like separate people: each member keeps its
+ * own thread, speaks on its own model route, and -- when an adventure is
+ * running -- knows what is happening at the table, so you can pull a companion
+ * aside mid-dungeon and plan.
+ * @param ctx - host context.
+ * @param req - the member, its thread, and the adventure it is standing in.
+ */
+export declare function memberChat(ctx: Context, req: MemberChatRequest): Promise<MemberChatResponse>;
+/** Structured output for a drafted scenario. */
+export declare const SCENARIO_TOOL: {
+    name: string;
+    description: string;
+    parameters: {
+        type: string;
+        properties: {
+            title: {
+                type: string;
+                description: string;
+            };
+            premise: {
+                type: string;
+                description: string;
+            };
+            tone: {
+                type: string;
+                description: string;
+            };
+            rules: {
+                type: string;
+                description: string;
+            };
+        };
+        required: string[];
+    };
+};
+/** Structured output for one drafted outline beat. */
+export declare const OUTLINE_TOOL: {
+    name: string;
+    description: string;
+    parameters: {
+        type: string;
+        properties: {
+            beats: {
+                type: string;
+                description: string;
+                items: {
+                    type: string;
+                    properties: {
+                        title: {
+                            type: string;
+                            description: string;
+                        };
+                        event: {
+                            type: string;
+                            description: string;
+                        };
+                        once: {
+                            type: string;
+                            description: string;
+                        };
+                        trigger: {
+                            type: string;
+                            description: string;
+                            properties: {
+                                kind: {
+                                    type: string;
+                                    enum: string[];
+                                    description: string;
+                                };
+                                turn: {
+                                    type: string;
+                                    description: string;
+                                };
+                                band: {
+                                    type: string;
+                                    enum: string[];
+                                    description: string;
+                                };
+                                encounterKind: {
+                                    type: string;
+                                    enum: string[];
+                                    description: string;
+                                };
+                                hpBelow: {
+                                    type: string;
+                                    description: string;
+                                };
+                                keyword: {
+                                    type: string;
+                                    description: string;
+                                };
+                                factKeyword: {
+                                    type: string;
+                                    description: string;
+                                };
+                                streak: {
+                                    type: string;
+                                    description: string;
+                                };
+                            };
+                            required: string[];
+                        };
+                    };
+                    required: string[];
+                };
+            };
+        };
+        required: string[];
+    };
+};
+/**
+ * Draft a scenario from the party and whatever the user already typed.
+ * @param ctx - host context.
+ * @param req - the party, the user's seed text, and the route to draft on.
+ */
+export declare function draftScenario(ctx: Context, req: ScenarioDraftRequest): Promise<ScenarioDraftResponse>;
+/**
+ * Draft an outline whose triggers the system can actually evaluate.
+ * @param ctx - host context.
+ * @param req - the party, the premise, how many beats, and the route.
+ */
+export declare function draftOutline(ctx: Context, req: OutlineDraftRequest): Promise<OutlineDraftResponse>;
 /** Attribute label lookup used by the client too. */
 export declare function attrLabel(id: AttrId): string;

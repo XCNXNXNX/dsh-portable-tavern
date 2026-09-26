@@ -11,21 +11,31 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { parseResult, routeCompletion, type RouteRequest } from '../llm.ts'
-import type {
-  CheckResult,
-  Encounter,
-  EncounterOption,
-  PartyMember,
-  PendingCheck,
-  RpgMemberRequest,
-  RpgMemberResponse,
-  RpgNarrateRequest,
-  RpgNarrateResponse,
-  RpgState,
-  RpgTurnRequest,
-  RpgTurnResponse,
+import {
+  emptyAdventureSetup,
+  type CheckResult,
+  type Encounter,
+  type EncounterOption,
+  type MemberChatRequest,
+  type MemberChatResponse,
+  type OutlineDraftRequest,
+  type OutlineDraftResponse,
+  type OutlineTrigger,
+  type PartyMember,
+  type PendingCheck,
+  type RpgMemberRequest,
+  type RpgMemberResponse,
+  type RpgNarrateRequest,
+  type RpgNarrateResponse,
+  type RpgState,
+  type RpgTurnRequest,
+  type RpgTurnResponse,
+  type ScenarioDraftRequest,
+  type ScenarioDraftResponse,
+  type TriggerKind,
 } from '../protocol.ts'
-import { ATTRS, actorSummary, computeCheck, type Actor, type AttrId } from './engine.ts'
+import { ATTRS, actorSummary, computeCheck, type Actor, type AttrId, type BandId } from './engine.ts'
+import { runOutline, type FiredBeat, type TriggerContext } from './outline.ts'
 
 /** Valid attribute ids, used to sanitize whatever the model returns. */
 const ATTR_IDS: AttrId[] = ['str', 'dex', 'con', 'int', 'wis', 'cha']
@@ -215,6 +225,71 @@ export function coerceCheck(raw: unknown): EncounterOption | null {
   return option
 }
 
+// ---------------------------------------------------------------------------
+// outline evaluation -- the system decides when an authored beat happens
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the state a trigger is allowed to read.
+ * @param state - the adventure so far.
+ * @param action - what the player just declared, if anything.
+ */
+export function triggerContext(state: RpgState, action: string): TriggerContext {
+  const last = [...(state.log ?? [])].reverse().find((e) => e.kind === 'check' && e.check !== undefined)
+  return {
+    turn: state.turn,
+    lastResult: last?.check
+      ? { band: last.check.band as BandId, success: last.check.success, margin: last.check.margin }
+      : null,
+    encounterKind: state.encounter ? state.encounter.kind : null,
+    party: [],
+    action,
+    facts: state.facts ?? [],
+    streak: typeof state.streak === 'number' ? state.streak : 0,
+  }
+}
+
+/**
+ * Run the outline and mark what fired. Retired beats are removed from the
+ * pending set so a `once` beat never repeats.
+ * @param state - the adventure so far.
+ * @param action - what the player just declared.
+ * @param party - the party, for the hit-point trigger.
+ */
+export function fireOutline(state: RpgState, action: string, party: PartyMember[]): { fired: FiredBeat[]; firedBeats: string[] } {
+  const beats = state.setup?.outline ?? []
+  if (beats.length === 0) return { fired: [], firedBeats: state.firedBeats ?? [] }
+  const already = new Set(state.firedBeats ?? [])
+  const ctx = triggerContext(state, action)
+  ctx.party = party.map((m) => ({ name: m.name, hp: m.hp, maxHp: m.maxHp }))
+  const pending = beats.filter((b) => !(b.once && (b.fired || already.has(b.id))))
+  const { fired, retired } = runOutline(pending, ctx)
+  const next = [...new Set([...(state.firedBeats ?? []), ...retired, ...fired.map((f) => f.id)])]
+  return { fired, firedBeats: next }
+}
+
+/** Render the beats that must be staged now, for the narrator's prompt. */
+export function firedBlock(fired: FiredBeat[]): string {
+  if (fired.length === 0) return ''
+  const lines: string[] = ['【本回合必须演出的事件】', '下面是这张桌子事先写好的剧情节点，触发条件刚刚由系统判定为成立。请把它们自然地编织进本回合的叙述，不要生硬地贴上去，也不要说"触发了一个事件"。']
+  for (const f of fired) {
+    lines.push('- ' + (f.title ? '「' + f.title + '」' : '') + f.event)
+  }
+  return lines.join('\n')
+}
+
+/** Render the premise / tone / rules for any narrator prompt. */
+export function setupBlock(state: RpgState): string {
+  const setup = state.setup
+  if (!setup) return ''
+  const lines: string[] = []
+  if (setup.title) lines.push('剧本：' + setup.title)
+  if (setup.premise) lines.push('故事前提：' + setup.premise)
+  if (setup.tone) lines.push('基调与尺度：' + setup.tone)
+  if (setup.rules) lines.push('本桌约定：' + setup.rules)
+  return lines.join('\n')
+}
+
 /** Render one party member's sheet for the GM prompt. */
 export function describeParty(party: PartyMember[]): string {
   if (party.length === 0) return '（队伍为空）'
@@ -244,9 +319,20 @@ export function recentLog(state: RpgState, limit: number): string {
 }
 
 /** The opening instruction for a turn. */
-export function buildTurnPrompt(req: RpgTurnRequest, member?: PartyMember | null): string {
+export function buildTurnPrompt(req: RpgTurnRequest, member?: PartyMember | null, fired: FiredBeat[] = []): string {
   const state = req.state
   const lines: string[] = []
+  const setup = setupBlock(state)
+  if (setup !== '') {
+    lines.push('【剧本设定】')
+    lines.push(setup)
+    lines.push('')
+  }
+  const beats = firedBlock(fired)
+  if (beats !== '') {
+    lines.push(beats)
+    lines.push('')
+  }
   lines.push('【当前场景】')
   lines.push(state.scene || '（尚未开始，请先给出一个自然的开场）')
   lines.push('')
@@ -298,9 +384,11 @@ function routeOf(req: { provider?: string; model?: string; custom?: unknown; sam
 export async function gmTurn(ctx: Context, req: RpgTurnRequest): Promise<RpgTurnResponse> {
   const system = GM_SYSTEM + (req.narratorPrompt ? '\n\n【本桌额外指令】\n' + req.narratorPrompt : '')
   const actor = req.party.length > 0 ? req.party[0] : null
+  // The system, not the model, decides whether an authored beat happens now.
+  const outline = fireOutline(req.state, req.action, req.party)
   const result = await routeCompletion(ctx, routeOf(req), {
     system,
-    messages: [{ role: 'user', content: buildTurnPrompt(req, actor) }],
+    messages: [{ role: 'user', content: buildTurnPrompt(req, actor, outline.fired) }],
     tools: [GM_TURN_TOOL],
     temperature: 0.85,
     maxTokens: 4096,
@@ -315,6 +403,8 @@ export async function gmTurn(ctx: Context, req: RpgTurnRequest): Promise<RpgTurn
       facts: [],
       checkKind: 'other',
       checkThreat: 50,
+      fired: outline.fired,
+      firedBeats: outline.firedBeats,
     }
   }
   const narration = str(data.narration) || result.text
@@ -332,6 +422,8 @@ export async function gmTurn(ctx: Context, req: RpgTurnRequest): Promise<RpgTurn
     facts,
     checkKind: KINDS.includes(kindRaw) ? kindRaw : 'other',
     checkThreat: num(data.checkThreat, encounter ? encounter.threat : 50, 0, 100),
+    fired: outline.fired,
+    firedBeats: outline.firedBeats,
   }
 }
 
@@ -343,8 +435,20 @@ export async function gmTurn(ctx: Context, req: RpgTurnRequest): Promise<RpgTurn
  */
 export async function gmNarrate(ctx: Context, req: RpgNarrateRequest): Promise<RpgNarrateResponse> {
   const system = GM_SYSTEM + (req.narratorPrompt ? '\n\n【本桌额外指令】\n' + req.narratorPrompt : '')
+  const outline = fireOutline(req.state, req.action, req.party)
   const lines: string[] = []
   lines.push(req.result.directive)
+  const setup = setupBlock(req.state)
+  if (setup !== '') {
+    lines.push('')
+    lines.push('【剧本设定】')
+    lines.push(setup)
+  }
+  const beats = firedBlock(outline.fired)
+  if (beats !== '') {
+    lines.push('')
+    lines.push(beats)
+  }
   lines.push('')
   lines.push('【当前场景】')
   lines.push(req.state.scene || '（未记录）')
@@ -367,12 +471,20 @@ export async function gmNarrate(ctx: Context, req: RpgNarrateRequest): Promise<R
   })
   const data = parseResult(result)
   if (data === null) {
-    return { narration: result.text || '', scene: req.state.scene, encounter: null }
+    return {
+      narration: result.text || '',
+      scene: req.state.scene,
+      encounter: null,
+      fired: outline.fired,
+      firedBeats: outline.firedBeats,
+    }
   }
   return {
     narration: str(data.narration) || result.text,
     scene: str(data.scene) || req.state.scene,
     encounter: coerceEncounter(data.encounter, req.state.encounter ? req.state.encounter.threat : 50),
+    fired: outline.fired,
+    firedBeats: outline.firedBeats,
   }
 }
 
@@ -479,6 +591,265 @@ export async function memberLine(ctx: Context, req: RpgMemberRequest): Promise<R
       ? { provider: 'custom', model: req.member.llm.customModel }
       : { provider: '', model: '' }
   return { line: line.trim(), provider: used.provider, model: used.model }
+}
+
+// ---------------------------------------------------------------------------
+// talking to one member (independent threads, shared adventure)
+// ---------------------------------------------------------------------------
+
+/** Schema for one party member's chat reply. */
+export const MEMBER_CHAT_TOOL = {
+  name: 'member_reply',
+  description: '提交这名队伍成员这轮的回复',
+  parameters: {
+    type: 'object',
+    properties: {
+      reply: { type: 'string', description: '这名成员的回复，可以包含对白与动作神态，1-4 句，不要复述规则或数值' },
+    },
+    required: ['reply'],
+  },
+}
+
+/**
+ * One turn of a private conversation with a party member.
+ *
+ * This is what makes the party feel like separate people: each member keeps its
+ * own thread, speaks on its own model route, and -- when an adventure is
+ * running -- knows what is happening at the table, so you can pull a companion
+ * aside mid-dungeon and plan.
+ * @param ctx - host context.
+ * @param req - the member, its thread, and the adventure it is standing in.
+ */
+export async function memberChat(ctx: Context, req: MemberChatRequest): Promise<MemberChatResponse> {
+  const lines: string[] = []
+  lines.push('你正在和玩家私聊。这是你们两个人的对话，队伍里的其他人看不到。')
+  if (req.adventure) {
+    lines.push('')
+    lines.push('【此刻冒险正在进行】')
+    if (req.adventure.scene) lines.push('当前场景：' + req.adventure.scene)
+    if (req.adventure.beat) lines.push('刚刚发生：' + req.adventure.beat.slice(0, 800))
+    if (req.adventure.encounter) {
+      lines.push('眼前的遭遇：' + req.adventure.encounter.title + '。' + req.adventure.encounter.description)
+      lines.push('可选行动：' + req.adventure.encounter.options.join(' / '))
+      lines.push('你很清楚这些，所以玩家可以在这里和你商量对策。')
+    }
+  }
+  lines.push('')
+  lines.push('请调用 member_reply 工具给出你的回复。')
+
+  const system = memberSystem(req.member, emptyState(), '') + '\n\n' + lines.join('\n')
+  const mode = req.member.llm.mode
+  const inherit = req.inherit ?? {}
+  const result = await routeCompletion(ctx, {
+    provider: mode === 'dsh' ? req.member.llm.provider : mode === 'inherit' ? inherit.provider : undefined,
+    model: mode === 'dsh' ? req.member.llm.model : mode === 'inherit' ? inherit.model : undefined,
+    custom: mode === 'custom'
+      ? { baseUrl: req.member.llm.baseUrl, apiKey: req.member.llm.apiKey, model: req.member.llm.customModel }
+      : mode === 'inherit' ? inherit.custom : undefined,
+    sampling: req.sampling,
+  }, {
+    system,
+    messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+    tools: [MEMBER_CHAT_TOOL],
+    temperature: 0.9,
+    maxTokens: 900,
+  })
+  const data = parseResult(result)
+  const reply = data === null ? result.text : (str((data as Record<string, unknown>).reply) || result.text)
+  const used = mode === 'dsh'
+    ? { provider: req.member.llm.provider, model: req.member.llm.model }
+    : mode === 'custom'
+      ? { provider: 'custom', model: req.member.llm.customModel }
+      : { provider: inherit.provider ?? '', model: inherit.model ?? '' }
+  return { reply: reply.trim(), provider: used.provider, model: used.model }
+}
+
+/** A blank state, used where a member only needs its own sheet. */
+function emptyState(): RpgState {
+  return {
+    scene: '', turn: 0, log: [], encounter: null, pending: null,
+    inventory: [], facts: [], setup: emptyAdventureSetup(), streak: 0, firedBeats: [],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AI drafting: a scenario, and an outline whose triggers the system can read
+// ---------------------------------------------------------------------------
+
+/** Structured output for a drafted scenario. */
+export const SCENARIO_TOOL = {
+  name: 'emit_scenario',
+  description: '输出一份可以直接开局的冒险设定',
+  parameters: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: '这次冒险的名字，不超过 12 个字' },
+      premise: { type: 'string', description: '故事前提：这是什么地方、发生了什么、玩家为什么在这里、眼前的目标是什么。150-300 字' },
+      tone: { type: 'string', description: '基调与尺度：例如"轻松冒险、不描写血腥"或"黑暗压抑、允许角色死亡"。一两句' },
+      rules: { type: 'string', description: '本桌约定：给守秘人的额外约束，例如"不出现现代科技""NPC 不会主动背叛玩家"。没有就留空' },
+    },
+    required: ['title', 'premise'],
+  },
+}
+
+/** Structured output for one drafted outline beat. */
+export const OUTLINE_TOOL = {
+  name: 'emit_outline',
+  description: '输出一组剧情节点；每个节点都带一个系统可以判定的触发条件',
+  parameters: {
+    type: 'object',
+    properties: {
+      beats: {
+        type: 'array',
+        description: '3-6 个节点，按大致的先后顺序排列',
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: '节点标题，不超过 10 个字，例如"发现信物"' },
+            event: { type: 'string', description: '触发后守秘人必须演出的内容：出现什么、发生什么、揭示什么。80-200 字，写成给守秘人的指令' },
+            once: { type: 'boolean', description: '是否只触发一次，通常为 true' },
+            trigger: {
+              type: 'object',
+              description: '触发条件；kind 决定读哪个字段',
+              properties: {
+                kind: {
+                  type: 'string',
+                  enum: ['turn', 'band', 'encounter', 'hp', 'action', 'fact', 'success', 'failure', 'always'],
+                  description: 'turn=到达回合 / band=判定档位 / encounter=遭遇类型 / hp=血量低于比例 / action=行动含关键词 / fact=事实含关键词 / success=连续成功 / failure=连续失败 / always=立即',
+                },
+                turn: { type: 'number', description: 'kind=turn 时使用：第几回合' },
+                band: { type: 'string', enum: ['triumph', 'success', 'costly', 'narrow', 'hair', 'fail', 'disaster'], description: 'kind=band 时使用' },
+                encounterKind: { type: 'string', enum: ['combat', 'chase', 'social', 'environment', 'other'], description: 'kind=encounter 时使用' },
+                hpBelow: { type: 'number', description: 'kind=hp 时使用：0 到 1 的比例，例如 0.3 表示三成血' },
+                keyword: { type: 'string', description: 'kind=action 时使用：玩家行动里出现这段文字就触发' },
+                factKeyword: { type: 'string', description: 'kind=fact 时使用：已确立事实里出现这段文字就触发' },
+                streak: { type: 'number', description: 'kind=success/failure 时使用：连续几次' },
+              },
+              required: ['kind'],
+            },
+          },
+          required: ['title', 'event', 'trigger'],
+        },
+      },
+    },
+    required: ['beats'],
+  },
+}
+
+/** Render the party for a drafting prompt. */
+function partyBrief(party: PartyMember[]): string {
+  if (party.length === 0) return '（还没有队伍成员，请按一支典型的冒险小队来写。）'
+  return party.map((m) => {
+    const bits = ['- ' + m.name + (m.role ? '（' + m.role + '）' : '')]
+    if (m.prompt) bits.push('  ' + m.prompt.replace(/\s+/g, ' ').slice(0, 120))
+    return bits.join('\n')
+  }).join('\n')
+}
+
+/**
+ * Draft a scenario from the party and whatever the user already typed.
+ * @param ctx - host context.
+ * @param req - the party, the user's seed text, and the route to draft on.
+ */
+export async function draftScenario(ctx: Context, req: ScenarioDraftRequest): Promise<ScenarioDraftResponse> {
+  const lines: string[] = []
+  lines.push('请为下面这支冒险小队设计一份可以直接开局的冒险设定。')
+  lines.push('')
+  lines.push('【队伍】')
+  lines.push(partyBrief(req.party))
+  lines.push('')
+  if (req.hint.trim() !== '') {
+    lines.push('【玩家已经写下的想法（请顺着它写，不要推翻）】')
+    lines.push(req.hint.trim())
+    lines.push('')
+  }
+  lines.push('要求：给出一个有明确眼前目标的开局；留出玩家做选择的空间，不要写成一本小说；不要替玩家决定任何事。')
+  lines.push('请调用 emit_scenario 工具输出。全程使用中文。')
+  const result = await routeCompletion(ctx, routeOf(req), {
+    system: GM_SYSTEM,
+    messages: [{ role: 'user', content: lines.join('\n') }],
+    tools: [SCENARIO_TOOL],
+    temperature: 0.95,
+    maxTokens: 2048,
+  })
+  const data = parseResult(result)
+  if (data === null) {
+    return { setup: { title: '新的冒险', premise: result.text.slice(0, 2000), tone: '', rules: '' } }
+  }
+  return {
+    setup: {
+      title: str(data.title) || '新的冒险',
+      premise: str(data.premise),
+      tone: str(data.tone),
+      rules: str(data.rules),
+    },
+  }
+}
+
+/**
+ * Draft an outline whose triggers the system can actually evaluate.
+ * @param ctx - host context.
+ * @param req - the party, the premise, how many beats, and the route.
+ */
+export async function draftOutline(ctx: Context, req: OutlineDraftRequest): Promise<OutlineDraftResponse> {
+  const count = Math.min(8, Math.max(2, Math.round(req.count) || 4))
+  const lines: string[] = []
+  lines.push('请为下面这次冒险设计 ' + count + ' 个剧情节点。')
+  lines.push('')
+  lines.push('【队伍】')
+  lines.push(partyBrief(req.party))
+  lines.push('')
+  if (req.premise.trim() !== '') {
+    lines.push('【故事前提】')
+    lines.push(req.premise.trim())
+    lines.push('')
+  }
+  lines.push('【关键要求】')
+  lines.push('每个节点都必须带一个触发条件，而且这个条件会被系统机械地判定——只有写得具体，它才会在该发生的时候发生。')
+  lines.push('可用的触发方式：到达第 N 回合、最近一次判定落在某个档位（triumph 大成功 / success 成功 / costly 险胜 / narrow 极限成功 / hair 差一点 / fail 失败 / disaster 惨败）、遇到某类遭遇（combat 战斗 / chase 追逐 / social 社交 / environment 环境）、有人血量低于某个比例、玩家行动里出现某个关键词、已确立的事实里出现某个关键词、连续成功或失败若干次。')
+  lines.push('请把节点分散在不同的触发方式上，不要全部用"第 N 回合"；让玩家做什么、做得怎么样，真的会改变故事走向。')
+  lines.push('event 字段写的是给守秘人的指令（出现什么、发生什么、揭示什么），不是给玩家看的文字。')
+  lines.push('请调用 emit_outline 工具输出。全程使用中文。')
+  const result = await routeCompletion(ctx, routeOf(req), {
+    system: GM_SYSTEM,
+    messages: [{ role: 'user', content: lines.join('\n') }],
+    tools: [OUTLINE_TOOL],
+    temperature: 0.95,
+    maxTokens: 3072,
+  })
+  const data = parseResult(result)
+  const raw = data !== null && Array.isArray(data.beats) ? data.beats : []
+  const beats: OutlineDraftResponse['beats'] = []
+  for (const item of raw.slice(0, 8)) {
+    if (typeof item !== 'object' || item === null) continue
+    const record = item as Record<string, unknown>
+    const title = str(record.title)
+    const event = str(record.event)
+    if (title === '' && event === '') continue
+    beats.push({
+      title: title || '剧情节点',
+      event,
+      once: record.once !== false,
+      trigger: coerceTrigger(record.trigger),
+    })
+  }
+  return { beats }
+}
+
+/** Coerce a model-authored trigger into one the engine understands. */
+function coerceTrigger(raw: unknown): OutlineTrigger {
+  const record = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  const kinds: TriggerKind[] = ['turn', 'band', 'encounter', 'hp', 'action', 'fact', 'success', 'failure', 'always']
+  const kind = kinds.includes(str(record.kind) as TriggerKind) ? str(record.kind) as TriggerKind : 'turn'
+  const out: OutlineTrigger = { kind }
+  if (kind === 'turn') out.turn = num(record.turn, 2, 1, 200)
+  if (kind === 'band') out.band = str(record.band, 'fail')
+  if (kind === 'encounter') out.encounterKind = str(record.encounterKind, 'combat')
+  if (kind === 'hp') out.hpBelow = Math.min(1, Math.max(0.05, num(record.hpBelow, 0.3, 0.05, 1)))
+  if (kind === 'action') out.keyword = str(record.keyword).slice(0, 40)
+  if (kind === 'fact') out.factKeyword = str(record.factKeyword).slice(0, 40)
+  if (kind === 'success' || kind === 'failure') out.streak = num(record.streak, 2, 1, 10)
+  return out
 }
 
 /** Attribute label lookup used by the client too. */

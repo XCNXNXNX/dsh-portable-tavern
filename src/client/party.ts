@@ -9,6 +9,7 @@
 
 import {
   INHERIT_ROUTE,
+  emptyAdventureSetup,
   type MemberRoute,
   type Party,
   type PartyMember,
@@ -18,6 +19,7 @@ import {
 const PARTIES_KEY = 'dsh.portable-tavern.parties.v1'
 const ACTIVE_KEY = 'dsh.portable-tavern.activeParty.v1'
 const SESSION_KEY = 'dsh.portable-tavern.rpg.v1'
+const CURRENT_KEY = 'dsh.portable-tavern.party.current.v1'
 
 /** Attribute display metadata (mirrors the engine table for UI use). */
 export const PARTY_ATTRS: { id: keyof PartyMember['attributes']; label: string; short: string; blurb: string }[] = [
@@ -108,7 +110,18 @@ export function makeParty(name = '新的队伍'): Party {
 
 /** A fresh adventure state for a party. */
 export function makeRpgState(): RpgState {
-  return { scene: '', turn: 0, log: [], encounter: null, pending: null, inventory: [], facts: [] }
+  return {
+    scene: '',
+    turn: 0,
+    log: [],
+    encounter: null,
+    pending: null,
+    inventory: [],
+    facts: [],
+    setup: emptyAdventureSetup(),
+    streak: 0,
+    firedBeats: [],
+  }
 }
 
 /** Human label for a member's model route. */
@@ -152,6 +165,26 @@ export function saveActivePartyId(id: string): void {
   try { localStorage.setItem(ACTIVE_KEY, id) } catch { /* quota */ }
 }
 
+/**
+ * The team currently on the table, saved continuously.
+ *
+ * The team library is for deliberate saves; this is the working copy, so a user
+ * who never presses 保存到队伍库 still gets their edits back after a reload.
+ * @returns the working team, or null when nothing has been saved yet.
+ */
+export function loadCurrentParty(): Party | null {
+  try {
+    const raw = localStorage.getItem(CURRENT_KEY)
+    if (raw === null) return null
+    return normalizeParty(JSON.parse(raw))
+  } catch { return null }
+}
+
+/** Persist the working team. */
+export function saveCurrentParty(party: Party): void {
+  try { localStorage.setItem(CURRENT_KEY, JSON.stringify(party)) } catch { /* quota */ }
+}
+
 /** The in-progress adventure. */
 export function loadRpgState(): RpgState | null {
   try {
@@ -166,6 +199,9 @@ export function loadRpgState(): RpgState | null {
       pending: parsed.pending ?? null,
       inventory: Array.isArray(parsed.inventory) ? parsed.inventory : [],
       facts: Array.isArray(parsed.facts) ? parsed.facts : [],
+      setup: parsed.setup ?? emptyAdventureSetup(),
+      streak: typeof parsed.streak === 'number' ? parsed.streak : 0,
+      firedBeats: Array.isArray(parsed.firedBeats) ? parsed.firedBeats : [],
     }
   } catch { return null }
 }

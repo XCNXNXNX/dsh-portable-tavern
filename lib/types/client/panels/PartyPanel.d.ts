@@ -6,7 +6,7 @@
  * 预设表与解析工具全部复用 client/party.ts，本文件只做展示与交互。
  */
 import type * as React from 'react';
-import { type Party } from '../../protocol.ts';
+import { type Party, type PartyMember } from '../../protocol.ts';
 /** PartyPanel 的全部输入：受控的队伍、编辑回调、队伍库与模型选项。 */
 export interface PartyPanelProps {
     /** 当前正在编辑的队伍（受控）。 */
@@ -31,6 +31,11 @@ export interface PartyPanelProps {
     customConfigured: boolean;
     /** 全局自定义接口的模型名，用于「跟随全局」的说明文字。 */
     customModel: string;
+    /**
+     * 把某名成员导出成一张标准 SillyTavern 角色卡。省略时按钮不显示，
+     * 因此这个面板在没有桥接层时依然可用。
+     */
+    onExportCard?: (member: PartyMember) => void;
 }
 /**
  * 队伍编辑器：队伍总览条 + 队伍级设置 + 成员卡片列表 + 队伍库。

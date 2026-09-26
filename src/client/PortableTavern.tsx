@@ -10,18 +10,20 @@ import type { ChatMessage, CharCard, Party, RpgState, StExtension, TavernSpec, W
 import { TavernApi } from './api.ts'
 import { loadCustomLlm, saveCustomLlm, clearCustomLlm, loadSampling, saveSampling } from './llm-custom.ts'
 import { Btn, Chips, ColorSwatches, CustomAdd, Field, RadioGroup, Section, Slider, cx, downloadFile } from './ui.tsx'
+import { ChatPanel } from './panels/ChatPanel.tsx'
 import { ExtPanel } from './panels/ExtPanel.tsx'
 import { PartyPanel } from './panels/PartyPanel.tsx'
 import { RpgPanel } from './panels/RpgPanel.tsx'
+import { cardFromMember, memberFromCard } from './character-bridge.ts'
 import {
-  clearRpgState,
   loadActivePartyId,
+  loadCurrentParty,
   loadParties,
   loadRpgState,
   makeParty,
   makeRpgState,
-  normalizeParty,
   saveActivePartyId,
+  saveCurrentParty,
   saveParties,
   saveRpgState,
 } from './party.ts'
@@ -128,6 +130,27 @@ function loadBgImage(): string {
 function saveBgImage(v: string): void {
   try { if (v) localStorage.setItem('dsh.portable-tavern.bgimage.v1', v); else localStorage.removeItem('dsh.portable-tavern.bgimage.v1') } catch { /* quota */ }
 }
+const THREADS_KEY = 'dsh.portable-tavern.threads.v1'
+
+/** Per-member conversation threads, keyed by member id. */
+function loadMemberThreads(): Record<string, ChatMessage[]> {
+  try {
+    const raw = localStorage.getItem(THREADS_KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : {}
+    if (typeof parsed !== 'object' || parsed === null) return {}
+    const out: Record<string, ChatMessage[]> = {}
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (Array.isArray(value)) out[key] = value as ChatMessage[]
+    }
+    return out
+  } catch { return {} }
+}
+
+/** Persist the member threads (the card thread lives in the workspace). */
+function saveMemberThreads(threads: Record<string, ChatMessage[]>): void {
+  try { localStorage.setItem(THREADS_KEY, JSON.stringify(threads)) } catch { /* quota */ }
+}
+
 const EXT_ENABLED_KEY = 'dsh.portable-tavern.ext.enabled.v1'
 const EXT_THEME_KEY = 'dsh.portable-tavern.ext.theme.v1'
 
@@ -450,6 +473,9 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   // --- tabletop RPG ---
   const [parties, setParties] = useState<Party[]>(loadParties)
   const [party, setParty] = useState<Party>(() => {
+    // Prefer the working copy: it carries edits the user never explicitly saved.
+    const working = loadCurrentParty()
+    if (working !== null) return working
     const id = loadActivePartyId()
     const found = loadParties().find((p) => p.id === id)
     return found ?? makeParty()
@@ -462,6 +488,11 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   const [extEnabled, setExtEnabled] = useState<string[]>(loadEnabledExt)
   const [extLog, setExtLog] = useState<string[]>([])
   const [extTheme, setExtTheme] = useState<string>(loadActiveTheme)
+  // --- conversations: the card thread plus one thread per party member ---
+  const [memberThreads, setMemberThreads] = useState<Record<string, ChatMessage[]>>(loadMemberThreads)
+  const [chatTarget, setChatTarget] = useState('card')
+  /** A plan carried from the chat window into the adventure window. */
+  const [carryPlan, setCarryPlan] = useState('')
 
   const patch = (key: keyof TavernSpec, value: unknown): void => setSpec((prev) => ({ ...prev, [key]: value }))
   const patchN = <K extends keyof TavernSpec>(section: K, key: string, value: unknown): void =>
@@ -530,8 +561,20 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   }, [rpg])
 
   useEffect(() => {
+    const timer = window.setTimeout(() => saveMemberThreads(memberThreads), 300)
+    return () => window.clearTimeout(timer)
+  }, [memberThreads])
+
+  useEffect(() => {
     saveActivePartyId(party.id)
   }, [party.id])
+
+  // Continuous autosave of the team on the table, so nothing is lost just
+  // because the user never pressed 保存到队伍库.
+  useEffect(() => {
+    const timer = window.setTimeout(() => saveCurrentParty(party), 300)
+    return () => window.clearTimeout(timer)
+  }, [party])
 
   useEffect(() => {
     refreshExt()
@@ -826,6 +869,18 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     setSavedChars(list); saveCharacters(list)
   }
 
+  /**
+   * Turn the character being edited into a party member and jump to the party
+   * tab. The card, its avatar and the builder state all travel across, so the
+   * same person can be chatted with and can join an adventure.
+   */
+  const onJoinParty = (): void => {
+    const member = memberFromCard(card, spec, avatar, party.members.length)
+    setParty({ ...party, members: [...party.members, member] })
+    setChatTarget(member.id)
+    setTab('party')
+  }
+
   const onApplyJson = (): void => {
     try {
       const parsed = JSON.parse(jsonDraft) as CharCard | Record<string, unknown>
@@ -1045,6 +1100,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
         <div className={css.stActions}>
           <Btn variant="primary" disabled={generating} onClick={onGenerate}>{generating ? '生成中…' : '生成角色卡'}</Btn>
           <Btn onClick={exportJson}>导出 JSON</Btn>
+          <Btn onClick={onJoinParty} title="把当前角色变成队伍成员；属性由角色卡推导，之后可在队伍页调整">加入队伍</Btn>
           <label className={css.stBtn}>导入角色卡<input type="file" accept=".json,.png,application/json,image/png" style={{ display: 'none' }} onChange={onImportCardFile} /></label>
           <span className={css.stVerToggle}>
             <button type="button" className={cx(css.stVerBtn, version === 'v2' && css.stVerActive)} onClick={() => setVersion('v2')}>V2</button>
@@ -1198,6 +1254,61 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   )
 
 
+  /**
+   * Every conversation the panel can show: the character card's thread under
+   * the key 'card', plus one per party member. The card thread keeps living in
+   * the workspace record, so this is a view rather than a second store.
+   */
+  const threads: Record<string, ChatMessage[]> = { card: chatMessages, ...memberThreads }
+
+  /** Split an edited thread map back into the two stores. */
+  const onThreads = (next: Record<string, ChatMessage[]>): void => {
+    setChatMessages(next.card ?? [])
+    const rest: Record<string, ChatMessage[]> = {}
+    for (const key of Object.keys(next)) {
+      if (key !== 'card') rest[key] = next[key]
+    }
+    setMemberThreads(rest)
+  }
+
+  /** What a party member needs to know about the adventure in progress. */
+  const adventureContext = (rpg.scene !== '' || rpg.encounter !== null || rpg.log.length > 0)
+    ? {
+      scene: rpg.scene,
+      beat: [...rpg.log].reverse().find((e) => e.kind === 'scene')?.text ?? '',
+      encounter: rpg.encounter === null
+        ? null
+        : {
+          title: rpg.encounter.title,
+          description: rpg.encounter.description,
+          options: rpg.encounter.options.map((o) => o.label),
+        },
+    }
+    : undefined
+
+  const renderChatPanel = (): React.ReactElement => (
+    <ChatPanel
+      api={api}
+      card={card}
+      cardAvatar={avatar}
+      spec={spec}
+      party={party}
+      threads={threads}
+      onThreads={onThreads}
+      target={chatTarget}
+      onTarget={setChatTarget}
+      globalPrompt={globalPrompt}
+      chatModel={chatModel}
+      onModel={setChatModel}
+      modelOptions={modelOptions}
+      customConfigured={customConfigured}
+      customModel={llmDraft.model}
+      adventure={adventureContext}
+      onCarryPlan={(plan) => { setCarryPlan(plan); setTab('rpg') }}
+      onGotoCharacter={() => setTab('character')}
+    />
+  )
+
   const renderRpg = (): React.ReactElement => (
     <RpgPanel
       api={api}
@@ -1209,6 +1320,8 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       customConfigured={customConfigured}
       customModel={llmDraft.model}
       onGotoParty={() => setTab('party')}
+      incomingAction={carryPlan}
+      onIncomingConsumed={() => setCarryPlan('')}
     />
   )
 
@@ -1237,6 +1350,11 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       modelOptions={modelOptions}
       customConfigured={customConfigured}
       customModel={llmDraft.model}
+      onExportCard={(member) => {
+        // The reverse of 加入队伍: a companion becomes a standard card.
+        const exported = cardFromMember(member)
+        downloadFile((member.name || 'companion') + '.json', new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }))
+      }}
     />
   )
 
@@ -1251,56 +1369,6 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       onTheme={onTheme}
     />
   )
-
-  const renderChat = (): React.ReactElement => {
-    if (!card) {
-      return (
-        <div className={css.stEmpty}>
-          <div className={css.stEmptyEmoji}>Tavern</div>
-          <div>还没有角色。请先到「角色卡」页设定/导入角色，再来开聊。</div>
-          <Btn variant="primary" onClick={() => setTab('character')}>去创建角色</Btn>
-        </div>
-      )
-    }
-    const d = card.data
-    return (
-      <div className={css.stChat}>
-        <div className={css.stChatHead}>
-          <div className={css.stChatAvatar} style={avatar ? undefined : { background: avatarGradient(spec) }}>
-            {avatar ? <img className={css.stChatAvatarImg} src={avatar} alt={d.name} /> : (d.name || '?').slice(0, 1)}
-          </div>
-          <div className={css.stChatMeta}>
-            <div className={css.stChatName}>{d.name || '未命名角色'}</div>
-            <select className={cx(css.stInput, css.stChatModel)} value={chatModel} onChange={(e) => setChatModel(e.target.value)}>
-              <option value="custom::">{customConfigured ? '自定义 · ' + llmDraft.model : '自定义模型（未配置）'}</option>
-              {modelOptions.length === 0 ? <option value="">加载模型…</option> : null}
-              {modelOptions.map((o) => <option key={o.provider + '::' + o.model} value={o.provider + '::' + o.model}>{o.label}</option>)}
-            </select>
-          </div>
-          <Btn onClick={onClearChat} title="清空对话">清空</Btn>
-        </div>
-        <div id="pt-chat-log" className={css.stChatLog}>
-          {chatMessages.map((m, i) => (
-            <div key={i} className={cx(css.stMsg, m.role === 'assistant' ? css.stMsgChar : css.stMsgUser)}>
-              {m.role === 'assistant'
-                ? (
-                  <div className={css.stMsgAvatar} style={avatar ? undefined : { background: avatarGradient(spec) }}>
-                    {avatar ? <img className={css.stMsgAvatarImg} src={avatar} alt={d.name} /> : (d.name || '?').slice(0, 1)}
-                  </div>
-                )
-                : null}
-              <div className={css.stMsgBubble}>{m.content}</div>
-            </div>
-          ))}
-        </div>
-        {chatError ? <div className={cx(css.stNotice, css.stChatError)}>{chatError}</div> : null}
-        <div className={css.stChatInput}>
-          <textarea className={cx(css.stInput, css.stTextarea)} rows={2} value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="输入对白或动作…（Enter 发送，Shift+Enter 换行）" onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend() } }} />
-          <Btn variant="primary" disabled={chatSending || !chatInput.trim()} onClick={onSend}>{chatSending ? '…' : '发送'}</Btn>
-        </div>
-      </div>
-    )
-  }
 
   const track = currentIndex >= 0 && currentIndex < playlist.length ? playlist[currentIndex] : null
 
@@ -1317,12 +1385,22 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
         ))}
       </div>
       <div className={css.stPanelBody}>
-        {tab === 'chat' ? renderChat()
+        {tab === 'chat' ? renderChatPanel()
           : tab === 'rpg' ? renderRpg()
             : tab === 'party' ? renderParty()
               : tab === 'plugins' ? renderPlugins()
-                : tab === 'settings' ? renderSettings()
+                : tab === 'settings' ? null
                   : renderCharacter()}
+        {/*
+          The settings pane is always mounted and merely hidden when another tab
+          is active. It owns #pt-ext-mount, and an installed extension's settings
+          panel has to have somewhere to live from the moment the tavern opens --
+          unmounting it made the compatibility host fall back to its floating
+          dock, which then lingered after switching to 设置.
+        */}
+        <div style={{ display: tab === 'settings' ? 'block' : 'none', height: '100%' }}>
+          {renderSettings()}
+        </div>
       </div>
       {track
         ? (

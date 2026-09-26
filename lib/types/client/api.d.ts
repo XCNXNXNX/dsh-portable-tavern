@@ -2,7 +2,7 @@
  * Browser-side API client for the /api/dsh-portable-tavern route family. The
  * only data access path the panel components use — plain fetch, same origin.
  */
-import { type ChatMessage, type ChatResponse, type CharCard, type CheckResult, type Encounter, type GenerateResponse, type ModelsResponse, type PartyMember, type PendingCheck, type RpgCheckResponse, type RpgMemberResponse, type RpgNarrateResponse, type RpgState, type RpgTurnResponse, type StExtension, type StInstallResponse, type TavernSpec, type WorldbookResponse } from '../protocol.ts';
+import { type ChatMessage, type ChatResponse, type CharCard, type CheckResult, type Encounter, type GenerateResponse, type MemberChatResponse, type ModelsResponse, type OutlineDraftResponse, type PartyMember, type PendingCheck, type RpgCheckResponse, type RpgMemberResponse, type RpgNarrateResponse, type RpgState, type RpgTurnResponse, type ScenarioDraftResponse, type StExtension, type StInstallResponse, type TavernSpec, type WorldbookResponse } from '../protocol.ts';
 /** Error carrying the route's JSON error message. */
 export declare class TavernApiError extends Error {
     constructor(message: string);
@@ -51,6 +51,23 @@ export declare class TavernApi {
         provider?: string;
         model?: string;
     }): Promise<RpgMemberResponse>;
+    /** One turn of a private conversation with a party member. */
+    chatMember(member: PartyMember, messages: ChatMessage[], adventure: {
+        scene: string;
+        beat: string;
+        encounter: {
+            title: string;
+            description: string;
+            options: string[];
+        } | null;
+    } | undefined, globalRoute?: {
+        provider?: string;
+        model?: string;
+    }): Promise<MemberChatResponse>;
+    /** Let the AI draft an adventure scenario from the party. */
+    rpgScenario(party: PartyMember[], hint: string, provider?: string, model?: string): Promise<ScenarioDraftResponse>;
+    /** Let the AI draft outline beats whose triggers the system can evaluate. */
+    rpgOutline(party: PartyMember[], premise: string, count: number, provider?: string, model?: string): Promise<OutlineDraftResponse>;
     /** Installed extensions plus the bundled theme pack. */
     extList(): Promise<{
         installed: StExtension[];

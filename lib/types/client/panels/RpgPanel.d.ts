@@ -29,6 +29,13 @@ export interface RpgPanelProps {
     customModel: string;
     /** Jump to the party tab. */
     onGotoParty: () => void;
+    /**
+     * A plan the player worked out in the chat window. Written into the action
+     * box once, then cleared through {@link RpgPanelProps.onIncomingConsumed}.
+     */
+    incomingAction?: string;
+    /** Called after the carried plan has been placed in the action box. */
+    onIncomingConsumed?: () => void;
 }
 /**
  * The tabletop surface.

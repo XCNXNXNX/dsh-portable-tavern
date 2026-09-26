@@ -250,6 +250,8 @@ function MemberCard(props: {
   modelOptions: ModelOption[]
   customConfigured: boolean
   customModel: string
+  /** Optional: export this member as a standard character card. */
+  onExportCard?: (member: PartyMember) => void
 }): React.ReactElement {
   const m = props.member
   const [skillName, setSkillName] = useState('')
@@ -289,6 +291,18 @@ function MemberCard(props: {
         <span className={css.stLibMeta}>{'HP ' + m.hp + '/' + m.maxHp}</span>
         <HpBar hp={m.hp} maxHp={m.maxHp} width={40} />
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          {props.onExportCard
+            ? (
+              <button
+                type="button"
+                className={css.stTplDel}
+                title="把 TA 导出成一张 SillyTavern 角色卡，可以去聊天页单独聊，也可以分享"
+                onClick={(e) => { e.stopPropagation(); props.onExportCard?.(m) }}
+              >
+                导出角色卡
+              </button>
+            )
+            : null}
           <button
             type="button"
             className={css.stTplDel}
@@ -479,6 +493,11 @@ export interface PartyPanelProps {
   customConfigured: boolean
   /** 全局自定义接口的模型名，用于「跟随全局」的说明文字。 */
   customModel: string
+  /**
+   * 把某名成员导出成一张标准 SillyTavern 角色卡。省略时按钮不显示，
+   * 因此这个面板在没有桥接层时依然可用。
+   */
+  onExportCard?: (member: PartyMember) => void
 }
 
 /**
@@ -653,6 +672,7 @@ export function PartyPanel(props: PartyPanelProps): React.ReactElement {
           modelOptions={props.modelOptions}
           customConfigured={props.customConfigured}
           customModel={props.customModel}
+          onExportCard={props.onExportCard}
         />
       ))}
 

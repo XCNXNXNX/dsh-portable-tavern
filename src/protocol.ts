@@ -19,6 +19,9 @@ export const TAVERN_API = {
   rpgRoll: TAVERN_API_BASE + '/rpg/roll',
   rpgNarrate: TAVERN_API_BASE + '/rpg/narrate',
   rpgMember: TAVERN_API_BASE + '/rpg/member',
+  rpgScenario: TAVERN_API_BASE + '/rpg/scenario',
+  rpgOutline: TAVERN_API_BASE + '/rpg/outline',
+  chatMember: TAVERN_API_BASE + '/chat/member',
   // --- SillyTavern extension host ---
   extList: TAVERN_API_BASE + '/ext/list',
   extCatalog: TAVERN_API_BASE + '/ext/catalog',
@@ -320,6 +323,15 @@ export interface RpgState {
   inventory: string[]
   /** Chekhov's guns the GM has established. */
   facts: string[]
+  /** The scenario and its authored outline. */
+  setup: AdventureSetup
+  /**
+   * Consecutive outcomes: positive counts successes, negative failures. Feeds
+   * the outline's streak triggers.
+   */
+  streak: number
+  /** Ids of outline beats that have already fired. */
+  firedBeats: string[]
 }
 
 /** Wire shape of the RPG engine's check result (mirrors CheckResult). */
@@ -363,6 +375,10 @@ export interface RpgTurnResponse {
   checkKind: string
   /** Threat rating the check is resolved against. */
   checkThreat: number
+  /** Outline beats whose condition the system just judged satisfied. */
+  fired: { id: string; title: string; reason: string }[]
+  /** The updated set of already-fired beat ids. */
+  firedBeats: string[]
 }
 
 export interface RpgCheckRequest {
@@ -399,6 +415,20 @@ export interface RpgNarrateResponse {
   narration: string
   scene: string
   encounter: Encounter | null
+  /** Outline beats the system fired alongside this verdict. */
+  fired: { id: string; title: string; reason: string }[]
+  /** The updated set of already-fired beat ids. */
+  firedBeats: string[]
+}
+
+export interface ScenarioDraftResponse {
+  /** A ready-to-use setup; the outline is drafted separately. */
+  setup: { title: string; premise: string; tone: string; rules: string }
+}
+
+export interface OutlineDraftResponse {
+  /** Drafted beats, each with a system-evaluable trigger. */
+  beats: { title: string; trigger: OutlineTrigger; event: string; once: boolean }[]
 }
 
 export interface RpgMemberRequest {
@@ -420,6 +450,124 @@ export interface RpgMemberResponse {
   line: string
   provider: string
   model: string
+}
+
+
+// ---------------------------------------------------------------------------
+// adventure setup: the scenario the table agreed on, and its outline
+// ---------------------------------------------------------------------------
+
+/** What a trigger can key on. Evaluated by the system, never by the model. */
+export type TriggerKind = 'always' | 'turn' | 'band' | 'encounter' | 'hp' | 'action' | 'fact' | 'success' | 'failure'
+
+/** One firing condition. Only the field matching `kind` is read. */
+export interface OutlineTrigger {
+  kind: TriggerKind
+  /** turn: fire once the adventure reaches this turn. */
+  turn?: number
+  /** band: fire when the latest verdict lands in this band. */
+  band?: string
+  /** encounter: fire when an encounter of this kind is on the table. */
+  encounterKind?: string
+  /** hp: fire when any member drops below this fraction of their maximum. */
+  hpBelow?: number
+  /** action: fire when the player's declaration contains this text. */
+  keyword?: string
+  /** fact: fire when an established fact contains this text. */
+  factKeyword?: string
+  /** success / failure: fire after this many consecutive outcomes. */
+  streak?: number
+}
+
+/** One authored beat of the story. */
+export interface OutlineBeat {
+  id: string
+  title: string
+  trigger: OutlineTrigger
+  /** What the narrator must stage when this fires. */
+  event: string
+  /** Retire the beat after it has fired once. */
+  once: boolean
+  /** Whether it has already fired in this adventure. */
+  fired: boolean
+  firedAtTurn: number
+}
+
+/** The table's agreed setup: written by the user, or drafted by the AI. */
+export interface AdventureSetup {
+  /** Short name for the campaign. */
+  title: string
+  /** The premise the whole adventure hangs on. */
+  premise: string
+  /** Tone and content guidance for the narrator. */
+  tone: string
+  /** House rules the table agreed on. */
+  rules: string
+  /** Authored beats, fired by the system when their condition is met. */
+  outline: OutlineBeat[]
+}
+
+/** A fresh, empty setup. */
+export function emptyAdventureSetup(): AdventureSetup {
+  return { title: '', premise: '', tone: '', rules: '', outline: [] }
+}
+
+// ---------------------------------------------------------------------------
+// member conversations (each party member has its own thread)
+// ---------------------------------------------------------------------------
+
+/** One chat thread: the character card, or one party member. */
+export interface ChatThread {
+  /** 'card' for the character card, otherwise the party member id. */
+  target: string
+  messages: ChatMessage[]
+}
+
+export interface MemberChatRequest {
+  member: PartyMember
+  /** This member's own thread. */
+  messages: ChatMessage[]
+  /** Optional adventure context so the member knows what is going on. */
+  adventure?: {
+    scene: string
+    /** The latest narration. */
+    beat: string
+    encounter: { title: string; description: string; options: string[] } | null
+  }
+  /** The tavern-wide route, used when the member is on 'inherit'. */
+  inherit?: { provider?: string; model?: string; custom?: LlmCustom }
+  sampling?: TemperaturePolicy
+}
+
+export interface MemberChatResponse {
+  reply: string
+  provider: string
+  model: string
+}
+
+// ---------------------------------------------------------------------------
+// AI drafting: scenarios and outlines
+// ---------------------------------------------------------------------------
+
+export interface ScenarioDraftRequest {
+  party: PartyMember[]
+  /** Whatever the user has already typed, used as a seed. */
+  hint: string
+  provider?: string
+  model?: string
+  custom?: LlmCustom
+  sampling?: TemperaturePolicy
+}
+
+export interface OutlineDraftRequest {
+  party: PartyMember[]
+  premise: string
+  /** How many beats to draft. */
+  count: number
+  provider?: string
+  model?: string
+  custom?: LlmCustom
+  sampling?: TemperaturePolicy
 }
 
 // ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ import {
   type CheckResult,
   type Encounter,
   type LlmCustom,
+  type MemberChatRequest,
   type PartyMember,
   type PendingCheck,
   type RpgMemberRequest,
@@ -30,7 +31,7 @@ import {
   type TemperaturePolicy,
 } from './protocol.ts'
 import { temperatureReport } from './temperature.ts'
-import { buildPending, gmNarrate, gmTurn, memberLine } from './rpg/gm.ts'
+import { buildPending, draftOutline, draftScenario, gmNarrate, gmTurn, memberChat, memberLine } from './rpg/gm.ts'
 import { judge, type ComputedCheck } from './rpg/engine.ts'
 import {
   contentTypeOf,
@@ -616,6 +617,95 @@ export function makeRoutes(ctx: Context): WebRoute[] {
         if (id === '') { writeError(res, 400, '缺少 id'); return }
         try {
           writeJson(res, 200, { ok: removeExtension(id) })
+        } catch (error) {
+          writeError(res, 500, error instanceof Error ? error.message : String(error))
+        }
+      },
+    },
+
+    {
+      kind: 'exact',
+      path: TAVERN_API.rpgScenario,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        if (body === undefined) { writeError(res, 400, 'invalid JSON body'); return }
+        try {
+          writeJson(res, 200, await draftScenario(ctx, {
+            party: readParty(body.party),
+            hint: typeof body.hint === 'string' ? body.hint.slice(0, 4000) : '',
+            provider: typeof body.provider === 'string' ? body.provider : undefined,
+            model: typeof body.model === 'string' ? body.model : undefined,
+            custom: readCustom(body),
+            sampling: readSampling(body),
+          }))
+        } catch (error) {
+          writeError(res, 500, error instanceof Error ? error.message : String(error))
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: TAVERN_API.rpgOutline,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        if (body === undefined) { writeError(res, 400, 'invalid JSON body'); return }
+        try {
+          writeJson(res, 200, await draftOutline(ctx, {
+            party: readParty(body.party),
+            premise: typeof body.premise === 'string' ? body.premise.slice(0, 6000) : '',
+            count: typeof body.count === 'number' ? body.count : 4,
+            provider: typeof body.provider === 'string' ? body.provider : undefined,
+            model: typeof body.model === 'string' ? body.model : undefined,
+            custom: readCustom(body),
+            sampling: readSampling(body),
+          }))
+        } catch (error) {
+          writeError(res, 500, error instanceof Error ? error.message : String(error))
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: TAVERN_API.chatMember,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        if (body === undefined) { writeError(res, 400, 'invalid JSON body'); return }
+        const member = readMember(body.member)
+        if (member === null) { writeError(res, 400, 'member 不是合法的队伍成员'); return }
+        const messages = (Array.isArray(body.messages) ? body.messages : [])
+          .filter((m): m is ChatMessage => isRecord(m) && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+          .slice(-40)
+        if (messages.length === 0) { writeError(res, 400, 'messages 不能为空'); return }
+        const adventure = isRecord(body.adventure)
+          ? {
+            scene: typeof body.adventure.scene === 'string' ? body.adventure.scene.slice(0, 2000) : '',
+            beat: typeof body.adventure.beat === 'string' ? body.adventure.beat.slice(0, 2000) : '',
+            encounter: readEncounter(body.adventure.encounter) === null
+              ? null
+              : {
+                title: (readEncounter(body.adventure.encounter) as Encounter).title,
+                description: (readEncounter(body.adventure.encounter) as Encounter).description,
+                options: (readEncounter(body.adventure.encounter) as Encounter).options.map((o) => o.label),
+              },
+          }
+          : undefined
+        try {
+          writeJson(res, 200, await memberChat(ctx, {
+            member,
+            messages,
+            adventure,
+            inherit: isRecord(body.inherit)
+              ? {
+                provider: typeof body.inherit.provider === 'string' ? body.inherit.provider : undefined,
+                model: typeof body.inherit.model === 'string' ? body.inherit.model : undefined,
+                custom: readCustom({ custom: body.inherit.custom }),
+              }
+              : undefined,
+            sampling: readSampling(body),
+          }))
         } catch (error) {
           writeError(res, 500, error instanceof Error ? error.message : String(error))
         }

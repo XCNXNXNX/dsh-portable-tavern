@@ -6,6 +6,9 @@ import {
   applyEffects, attrMod, bandOf, computeCheck, effectsFor, judge, makeActor,
   rollDice, rollDie, snapDifficulty, BANDS, type Actor, type CheckOption,
 } from '../src/rpg/engine.ts'
+import {
+  TRIGGER_KINDS, describeTrigger, evaluateTrigger, nextStreak, runOutline, type TriggerContext,
+} from '../src/rpg/outline.ts'
 
 let pass = 0
 let fail = 0
@@ -118,6 +121,62 @@ ok('status is added', hurt.status.includes('被追击'))
 ok('original actor is untouched', hero.hp === 24 && hero.status.length === 0)
 const healed = applyEffects(hurt, { hpLoss: 0, addStatus: [], removeStatus: ['被追击'], endsEncounter: true })
 ok('status can be cleared', !healed.status.includes('被追击'))
+
+// ---------------------------------------------------------------------------
+// outline triggers: the system, not the model, decides when a beat happens
+// ---------------------------------------------------------------------------
+
+const baseCtx: TriggerContext = {
+  turn: 3,
+  lastResult: { band: 'fail', success: false, margin: -12 },
+  encounterKind: 'combat',
+  party: [{ name: '艾拉', hp: 24, maxHp: 24 }, { name: '波洛', hp: 4, maxHp: 20 }],
+  action: '我冲上去砍它的眼睛',
+  facts: ['沼泽里没有鸟叫', '潜伏者被喊声引来了'],
+  streak: -2,
+}
+
+eq('always fires', evaluateTrigger({ kind: 'always' }, baseCtx).fired, true)
+eq('turn fires at or after', evaluateTrigger({ kind: 'turn', turn: 3 }, baseCtx).fired, true)
+eq('turn does not fire early', evaluateTrigger({ kind: 'turn', turn: 4 }, baseCtx).fired, false)
+eq('band matches the last verdict', evaluateTrigger({ kind: 'band', band: 'fail' }, baseCtx).fired, true)
+eq('band ignores a different band', evaluateTrigger({ kind: 'band', band: 'triumph' }, baseCtx).fired, false)
+eq('band needs a verdict', evaluateTrigger({ kind: 'band', band: 'fail' }, { ...baseCtx, lastResult: null }).fired, false)
+eq('encounter matches', evaluateTrigger({ kind: 'encounter', encounterKind: 'combat' }, baseCtx).fired, true)
+eq('encounter needs an encounter', evaluateTrigger({ kind: 'encounter', encounterKind: 'combat' }, { ...baseCtx, encounterKind: null }).fired, false)
+eq('hp fires on the hurt member', evaluateTrigger({ kind: 'hp', hpBelow: 0.3 }, baseCtx).fired, true)
+eq('hp ignores a healthy party', evaluateTrigger({ kind: 'hp', hpBelow: 0.1 }, baseCtx).fired, false)
+eq('action keyword matches', evaluateTrigger({ kind: 'action', keyword: '砍' }, baseCtx).fired, true)
+eq('action keyword is case-insensitive', evaluateTrigger({ kind: 'action', keyword: '沼泽' }, baseCtx).fired, false)
+eq('empty keyword never fires', evaluateTrigger({ kind: 'action', keyword: '   ' }, baseCtx).fired, false)
+eq('fact keyword matches', evaluateTrigger({ kind: 'fact', factKeyword: '鸟叫' }, baseCtx).fired, true)
+eq('failure streak fires', evaluateTrigger({ kind: 'failure', streak: 2 }, baseCtx).fired, true)
+eq('failure streak respects the count', evaluateTrigger({ kind: 'failure', streak: 3 }, baseCtx).fired, false)
+eq('success streak does not fire on a losing run', evaluateTrigger({ kind: 'success', streak: 1 }, baseCtx).fired, false)
+eq('unknown kind never fires', evaluateTrigger({ kind: 'nonsense' as never }, baseCtx).fired, false)
+
+// streaks
+eq('a success starts a winning run', nextStreak(-3, true), 1)
+eq('a success extends a winning run', nextStreak(2, true), 3)
+eq('a failure starts a losing run', nextStreak(4, false), -1)
+eq('a failure extends a losing run', nextStreak(-2, false), -3)
+
+// running the outline
+const outline = [
+  { id: 'b1', title: '开场', trigger: { kind: 'turn' as const, turn: 1 }, event: '钟自己响了。', once: true, fired: false },
+  { id: 'b2', title: '惨败之后', trigger: { kind: 'band' as const, band: 'disaster' }, event: '信物摔碎了。', once: true, fired: false },
+  { id: 'b3', title: '空节点', trigger: { kind: 'always' as const }, event: '   ', once: true, fired: false },
+  { id: 'b4', title: '已触发过', trigger: { kind: 'always' as const }, event: '不该再来一次。', once: true, fired: true },
+  { id: 'b5', title: '可重复', trigger: { kind: 'encounter' as const, encounterKind: 'combat' }, event: '它又来了。', once: false, fired: false },
+]
+const run = runOutline(outline, baseCtx)
+eq('only the satisfied beats fire', run.fired.map((f) => f.id), ['b1', 'b5'])
+eq('empty beats are retired silently', run.retired.includes('b3'), true)
+eq('already-fired once beats stay retired', run.fired.some((f) => f.id === 'b4'), false)
+ok('fired beats carry the reason', run.fired[0].reason.includes('第 3 回合'))
+
+// describeTrigger must cover every kind the editor can offer
+ok('every trigger kind has a description', TRIGGER_KINDS.every((t) => describeTrigger({ kind: t.kind }).length > 0))
 
 // --- determinism ---------------------------------------------------------
 const seq = (): (() => number) => { let i = 0; const v = [0.1, 0.5, 0.9]; return () => v[i++ % 3] }

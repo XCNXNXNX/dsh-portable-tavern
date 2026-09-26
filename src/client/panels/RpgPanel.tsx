@@ -22,6 +22,8 @@ import type {
 } from '../../protocol.ts'
 import { TavernApi } from '../api.ts'
 import { applyEffects, type Actor } from '../../rpg/engine.ts'
+import { nextStreak } from '../../rpg/outline.ts'
+import { OutlineEditor } from './OutlineEditor.tsx'
 import { Btn, Field, Section, cx } from '../ui.tsx'
 import { css } from '../styles.ts'
 
@@ -44,6 +46,13 @@ export interface RpgPanelProps {
   customModel: string
   /** Jump to the party tab. */
   onGotoParty: () => void
+  /**
+   * A plan the player worked out in the chat window. Written into the action
+   * box once, then cleared through {@link RpgPanelProps.onIncomingConsumed}.
+   */
+  incomingAction?: string
+  /** Called after the carried plan has been placed in the action box. */
+  onIncomingConsumed?: () => void
 }
 
 /** A fresh log id. */
@@ -70,6 +79,31 @@ function withFacts(state: RpgState, facts: string[]): RpgState {
   const set = new Set(state.facts)
   for (const f of facts) set.add(f)
   return { ...state, facts: [...set].slice(-40) }
+}
+
+/**
+ * Fold the outline beats the system just fired into the log.
+ *
+ * They are logged as system lines so the player can see *why* the story turned
+ * -- "剧情节点「发现信物」触发（第 4 回合）" -- instead of the event appearing
+ * out of nowhere.
+ * @param state - the state to extend.
+ * @param fired - beats the host reported as fired.
+ * @param firedBeats - the host's updated retired-id set.
+ */
+function withFired(state: RpgState, fired: { id: string; title: string; reason: string }[], firedBeats: string[]): RpgState {
+  if (fired.length === 0) return { ...state, firedBeats }
+  let next: RpgState = { ...state, firedBeats }
+  for (const beat of fired) {
+    next = withLog(next, {
+      id: logId(),
+      kind: 'system',
+      who: '剧情大纲',
+      text: '节点「' + (beat.title || beat.id) + '」触发（' + beat.reason + '）',
+      at: Date.now(),
+    })
+  }
+  return next
 }
 
 /** The colour family of a band, used to tint the dice block. */
@@ -190,6 +224,14 @@ export function RpgPanel(props: RpgPanelProps): React.ReactElement {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [props.state.log.length, busy])
 
+  // A plan worked out in the chat window lands here, ready to be executed.
+  useEffect(() => {
+    const carried = (props.incomingAction ?? '').trim()
+    if (carried === '') return
+    setAction(carried)
+    props.onIncomingConsumed?.()
+  }, [props.incomingAction])
+
   /** Write system effects back into the team. */
   const settleParty = (memberId: string, result: CheckResult): { line: string; party: Party } => {
     const index = members.findIndex((m) => m.id === memberId)
@@ -238,7 +280,14 @@ export function RpgPanel(props: RpgPanelProps): React.ReactElement {
       const result = await props.api.rpgRoll(pending, critEnabled)
       const settled = settleParty(who.id, result)
 
-      let next: RpgState = { ...props.state, pending: null, turn: props.state.turn + 1 }
+      // The turn counter already advanced when the player committed to this
+      // action; a check resolved inside that turn must not advance it again.
+      let next: RpgState = {
+        ...props.state,
+        pending: null,
+        // Feeds the outline's consecutive-success / consecutive-failure triggers.
+        streak: nextStreak(props.state.streak ?? 0, result.success),
+      }
       next = withLog(next, { id: logId(), kind: 'action', who: who.name, text: pending.option.label + '（' + who.name + '）', at: Date.now() })
       next = withLog(next, { id: logId(), kind: 'check', who: '系统', text: '', check: result, at: Date.now() })
       if (settled.line !== '') next = withLog(next, { id: logId(), kind: 'result', who: '系统', text: settled.line, at: Date.now() })
@@ -258,6 +307,8 @@ export function RpgPanel(props: RpgPanelProps): React.ReactElement {
       })
       let after: RpgState = { ...next, scene: narrated.scene, encounter: narrated.encounter }
       after = withLog(after, { id: logId(), kind: 'scene', who: '守秘人', text: narrated.narration, at: Date.now() })
+      // The verdict just resolved, so band / streak / hp triggers can now fire.
+      after = withFired(after, narrated.fired ?? [], narrated.firedBeats ?? after.firedBeats)
       props.onState(after)
       if (chatter) await speakUp(after, settled.party, narrated.narration)
     } catch (e) {
@@ -289,7 +340,9 @@ export function RpgPanel(props: RpgPanelProps): React.ReactElement {
     if (text === '' || !actor) return
     setBusy('turn'); setError('')
     try {
-      let next: RpgState = { ...props.state, pending: null }
+      // Committing to an action is what advances the clock, so turn-based
+      // outline triggers can fire on a plain narration turn too.
+      let next: RpgState = { ...props.state, pending: null, turn: props.state.turn + 1 }
       next = withLog(next, { id: logId(), kind: 'action', who: actor.name, text, at: Date.now() })
       props.onState(next)
       setAction('')
@@ -304,6 +357,7 @@ export function RpgPanel(props: RpgPanelProps): React.ReactElement {
       let after: RpgState = { ...next, scene: res.scene, encounter: res.encounter, pending: null }
       after = withFacts(after, res.facts)
       after = withLog(after, { id: logId(), kind: 'scene', who: '守秘人', text: res.narration, at: Date.now() })
+      after = withFired(after, res.fired ?? [], res.firedBeats ?? after.firedBeats)
       props.onState(after)
 
       if (res.encounter !== null) {
@@ -357,7 +411,10 @@ export function RpgPanel(props: RpgPanelProps): React.ReactElement {
 
   const onOption = async (option: EncounterOption): Promise<void> => {
     if (!actor || props.state.encounter === null) return
-    await requestCheck(option, props.state.encounter, actor, props.state)
+    // Picking a course of action is also a commitment, so it advances the clock.
+    const advanced: RpgState = { ...props.state, turn: props.state.turn + 1 }
+    props.onState(advanced)
+    await requestCheck(option, props.state.encounter, actor, advanced)
   }
 
   if (members.length === 0) {
@@ -479,6 +536,17 @@ export function RpgPanel(props: RpgPanelProps): React.ReactElement {
         </Btn>
       </div>
 
+      <Section title="剧本与剧情大纲" hint="你写，或者让 AI 起草；触发条件由系统判定" defaultOpen={false}>
+        <OutlineEditor
+          api={props.api}
+          party={props.party.members}
+          setup={props.state.setup}
+          onChange={(next) => props.onState({ ...props.state, setup: next })}
+          chatModel={props.chatModel}
+          firedBeats={props.state.firedBeats ?? []}
+        />
+      </Section>
+
       <Section title="冒险设置" hint="这些开关只影响本局" defaultOpen={false}>
         <Field label="自然骰暴击（掷出 96-100 视为大成功，1-5 视为大失败，覆盖差值档位）">
           <label className={css.stCheck}>
@@ -510,7 +578,8 @@ export function RpgPanel(props: RpgPanelProps): React.ReactElement {
           )
           : null}
         <div className={css.stRow}>
-          <Btn onClick={() => { props.onState({ ...props.state, log: [], encounter: null, pending: null, facts: [], turn: 0 }) }}>清空本局记录</Btn>
+          <Btn onClick={() => { props.onState({ ...props.state, log: [], encounter: null, pending: null, facts: [], turn: 0, streak: 0, firedBeats: [] }) }}>清空本局记录</Btn>
+          <Btn onClick={() => { props.onState({ ...props.state, log: [], encounter: null, pending: null, facts: [], turn: 0, streak: 0, firedBeats: [], scene: '' }) }}>重开一局（保留剧本）</Btn>
         </div>
       </Section>
     </div>
