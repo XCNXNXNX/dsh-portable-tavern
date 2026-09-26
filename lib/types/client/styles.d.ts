@@ -5,4 +5,6 @@
  * same-named class selectors in CSS_TEXT.
  */
 export declare const css: Record<string, string>;
+/** The generated stylesheet text (also used by the theme preview). */
+export declare function stylesheetText(): string;
 export declare function adoptStyles(): void;

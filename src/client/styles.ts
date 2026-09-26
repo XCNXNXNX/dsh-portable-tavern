@@ -139,7 +139,105 @@ const CSS_TEXT = `
 .stLibMeta{color:#6f7683;font-size:11px;flex:none;white-space:nowrap}
 .stMsgAvatar{width:26px;height:26px;border-radius:50%;overflow:hidden;flex:none;margin-top:2px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700}
 .stMsgAvatarImg{width:100%;height:100%;object-fit:cover;display:block}
+
+/* ---------------------------------------------------------------------------
+   SillyTavern theme contract + tabletop surface.
+
+   Every value below is expressed as a variable with the historical literal as
+   its fallback, so an unthemed tavern renders exactly as before while a theme
+   (built-in or an installed community extension) can restyle the whole surface
+   by redefining variables alone. The --SmartTheme* names are the contract the
+   SillyTavern beautification ecosystem is written against.
+   --------------------------------------------------------------------------- */
+:root{
+  --SmartThemeBodyColor:#e8e9ec;
+  --SmartThemeEmColor:#c9a227;
+  --SmartThemeQuoteColor:#8b93a1;
+  --SmartThemeUnderlineColor:#4f7cff;
+  --SmartThemeBlurTintColor:rgba(22,24,29,0.82);
+  --SmartThemeChatTintColor:rgba(18,20,26,0.72);
+  --SmartThemeUserMesBlurTintColor:rgba(44,52,70,0.85);
+  --SmartThemeBotMesBlurTintColor:rgba(30,35,44,0.85);
+  --SmartThemeBlurStrength:10px;
+  --SmartThemeShadowColor:rgba(0,0,0,0.45);
+  --SmartThemeBorderColor:#262932;
+  --st-accent:#4f7cff;
+  --st-bg:#16181d;
+  --st-panel:#1b1e25;
+  --st-panel-2:#20242c;
+  --st-text:#e8e9ec;
+  --st-text-dim:#9aa0ab;
+  --st-border:#262932;
+  --st-msg-user:#2c3446;
+  --st-msg-char:#1e232c;
+  /* Derived, not literal: a theme that only repaints --st-bg still gets a
+     matching input/chat surface, which light themes depend on. */
+  --st-chat-bg:var(--st-bg);
+}
+.stPanel{background:var(--st-bg);color:var(--st-text);border-left-color:var(--st-border)}
+.stPanelHead,.stTabbar,.stResultTabs{border-bottom-color:var(--st-border)}
+.stSection,.stResultWrap,.stLibItem{background:var(--st-panel);border-color:var(--st-border)}
+.stSectionHead{background:var(--st-panel-2);color:var(--st-text)}
+.stInput{background:var(--st-chat-bg,#12141a);border-color:var(--st-border);color:var(--st-text)}
+.stMsgUser .stMsgBubble{background:var(--st-msg-user)}
+.stMsgChar .stMsgBubble{background:var(--st-msg-char)}
+.stChip,.stRadio{border-color:var(--st-border)}
+.stChatLog{background:var(--st-chat-bg,#12141a);border-color:var(--st-border)}
+.stBtn{border-color:var(--st-border)}
+
+/* --- tabletop surface --- */
+.stRpgHead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.stRpgTitle{font-weight:700;font-size:14px}
+.stRpgTurn{font-size:11px;color:var(--st-text-dim);background:var(--st-panel-2);border-radius:5px;padding:2px 8px}
+.stRpgSpacer{flex:1}
+.stRpgParty{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.stRpgChip{display:inline-flex;align-items:center;gap:6px;background:var(--st-panel);border:1px solid var(--st-border);color:var(--st-text);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer}
+.stRpgChip:hover{border-color:var(--st-accent)}
+.stRpgChipActive{border-color:var(--st-accent);background:var(--st-panel-2);box-shadow:0 0 0 1px var(--st-accent) inset}
+.stRpgLog{border:1px solid var(--st-border);border-radius:10px;background:var(--st-chat-bg,#12141a);padding:12px 14px;max-height:46vh;min-height:140px;overflow-y:auto;margin-bottom:10px}
+.stRpgHint{color:var(--st-text-dim);font-size:12px;line-height:1.7}
+.stRpgBusy{color:var(--st-accent);font-size:12px;padding:8px 0;animation:stPulse 1.4s ease-in-out infinite}
+@keyframes stPulse{0%,100%{opacity:0.45}50%{opacity:1}}
+.stRpgCard{border:1px solid var(--st-border);border-left:3px solid var(--st-accent);border-radius:10px;background:var(--st-panel);padding:12px 14px;margin-bottom:10px;display:flex;flex-direction:column;gap:10px}
+.stRpgCardTitle{font-weight:700;font-size:14px}
+.stRpgCardDesc{font-size:13px;line-height:1.7;color:var(--st-text);opacity:0.9}
+.stRpgCardMeta{font-size:11px;color:var(--st-text-dim)}
+.stRpgRequired{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.stRpgRequiredLabel{font-size:12px;color:var(--st-text-dim)}
+.stRpgRequiredValue{font-size:30px;font-weight:800;color:var(--st-accent);line-height:1;letter-spacing:-1px}
+.stRpgBreakdown{display:flex;flex-wrap:wrap;gap:6px}
+.stRpgBreakdownRow{font-size:11px;color:var(--st-text-dim);background:var(--st-panel-2);border-radius:5px;padding:3px 8px}
+.stRpgBreakdownRow b{color:var(--st-text)}
+.stRpgOptions{display:flex;flex-direction:column;gap:8px}
+.stRpgOption{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;background:var(--st-panel-2);border:1px solid var(--st-border);border-radius:9px;padding:10px 12px;cursor:pointer;color:var(--st-text)}
+.stRpgOption:hover:not(:disabled){border-color:var(--st-accent);background:var(--st-panel)}
+.stRpgOption:disabled{opacity:0.5;cursor:default}
+.stRpgOptionLabel{font-weight:700;font-size:13px}
+.stRpgOptionHint{font-size:12px;color:var(--st-text-dim);line-height:1.6}
+.stRpgOptionMeta{font-size:10px;color:var(--st-text-dim);letter-spacing:0.5px;text-transform:uppercase}
+.stRpgInput{display:flex;gap:8px;align-items:flex-end}
+.stRpgInput textarea{flex:1}
+.stRpgFacts{display:flex;flex-direction:column;gap:4px;max-height:180px;overflow-y:auto}
+.stRpgFact{font-size:12px;color:var(--st-text-dim);border-left:2px solid var(--st-border);padding-left:8px;line-height:1.6}
+
+/* --- extension manager + compat host surfaces --- */
+.stExtGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.stExtCard{border:1px solid var(--st-border);border-radius:10px;background:var(--st-panel);padding:10px;display:flex;flex-direction:column;gap:6px;cursor:pointer}
+.stExtCardActive{border-color:var(--st-accent);box-shadow:0 0 0 1px var(--st-accent) inset}
+.stExtPreview{height:64px;border-radius:7px;border:1px solid var(--st-border)}
+.stExtName{font-weight:700;font-size:13px}
+.stExtMeta{font-size:11px;color:var(--st-text-dim)}
+.stExtDesc{font-size:11.5px;color:var(--st-text-dim);line-height:1.6}
+.stExtRow{display:flex;align-items:center;gap:10px;border:1px solid var(--st-border);border-radius:9px;padding:8px 10px;margin-bottom:6px;background:var(--st-panel)}
+.stExtRowMain{flex:1;min-width:0}
+.stExtLog{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.6;color:var(--st-text-dim);background:var(--st-chat-bg,#12141a);border:1px solid var(--st-border);border-radius:8px;padding:8px 10px;max-height:180px;overflow-y:auto;white-space:pre-wrap}
+.stExtMount{border-top:1px solid var(--st-border);margin-top:10px;padding-top:10px}
 `
+
+/** The generated stylesheet text (also used by the theme preview). */
+export function stylesheetText(): string {
+  return CSS_TEXT
+}
 
 export function adoptStyles(): void {
   if (typeof document === 'undefined') return

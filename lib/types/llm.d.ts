@@ -150,6 +150,47 @@ export declare function listModels(ctx: Context): Promise<{
 }>;
 /** Produce the character's reply for one chat turn. */
 export declare function chatReply(ctx: Context, card: CharCard, messages: ChatMessage[], provider?: string, model?: string, globalPrompt?: string, custom?: LlmCustom, sampling?: TemperaturePolicy): Promise<string>;
+/**
+ * A model route chosen by the caller rather than by the global default: an
+ * explicit harness provider/model pair, or a user-supplied endpoint. An empty
+ * provider/model pair means "fall back to the harness default".
+ */
+export interface RouteRequest {
+    provider?: string;
+    model?: string;
+    custom?: LlmCustom;
+    sampling?: TemperaturePolicy;
+}
+/**
+ * One completion on a caller-chosen route.
+ *
+ * This is what makes per-member model routing real: each party member may pin
+ * its own provider/model or its own OpenAI-compatible endpoint, so a single
+ * table can mix a local narrator with remote companions.
+ * @param ctx - host context carrying the llm service.
+ * @param route - the route the caller picked.
+ * @param options - prompt, tool schemas and budget.
+ */
+export declare function routeCompletion(ctx: Context, route: RouteRequest, options: {
+    system: string;
+    messages: ChatMessage[];
+    tools?: unknown[];
+    temperature: number;
+    maxTokens: number;
+}): Promise<CompletionResult>;
+/**
+ * One visible-text completion on a caller-chosen route.
+ * @param ctx - host context.
+ * @param route - the route the caller picked.
+ * @param options - prompt and budget.
+ */
+export declare function routeText(ctx: Context, route: RouteRequest, options: {
+    system: string;
+    messages: ChatMessage[];
+    tools?: unknown[];
+    temperature: number;
+    maxTokens: number;
+}): Promise<string>;
 /** Round-trip test of a user-supplied endpoint (settings 「测试连接」). */
 export declare function testCustom(custom: LlmCustom, sampling?: TemperaturePolicy): Promise<{
     ok: true;

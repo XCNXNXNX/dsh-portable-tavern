@@ -4,11 +4,28 @@
  * goes through the TavernApi fetch client. No emoji, per repo rules.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type * as React from 'react'
-import type { ChatMessage, CharCard, TavernSpec, WorldbookEntry } from '../protocol.ts'
+import type { ChatMessage, CharCard, Party, RpgState, StExtension, TavernSpec, WorldbookEntry } from '../protocol.ts'
 import { TavernApi } from './api.ts'
 import { loadCustomLlm, saveCustomLlm, clearCustomLlm, loadSampling, saveSampling } from './llm-custom.ts'
+import { Btn, Chips, ColorSwatches, CustomAdd, Field, RadioGroup, Section, Slider, cx, downloadFile } from './ui.tsx'
+import { ExtPanel } from './panels/ExtPanel.tsx'
+import { PartyPanel } from './panels/PartyPanel.tsx'
+import { RpgPanel } from './panels/RpgPanel.tsx'
+import {
+  clearRpgState,
+  loadActivePartyId,
+  loadParties,
+  loadRpgState,
+  makeParty,
+  makeRpgState,
+  normalizeParty,
+  saveActivePartyId,
+  saveParties,
+  saveRpgState,
+} from './party.ts'
+import { createStHost } from './st/index.ts'
 import { css } from './styles.ts'
 
 // ---------------------------------------------------------------------------
@@ -49,10 +66,6 @@ const DEFAULT_SPEC: TavernSpec = {
 // ---------------------------------------------------------------------------
 // small utils
 // ---------------------------------------------------------------------------
-
-function cx(...xs: Array<string | false | null | undefined>): string {
-  return xs.filter(Boolean).join(' ')
-}
 
 function cleanPlaceholders(s: string | undefined, name: string | undefined): string {
   return String(s ?? '').split('{{char}}').join(name || '角色').split('{{user}}').join('你')
@@ -115,6 +128,36 @@ function loadBgImage(): string {
 function saveBgImage(v: string): void {
   try { if (v) localStorage.setItem('dsh.portable-tavern.bgimage.v1', v); else localStorage.removeItem('dsh.portable-tavern.bgimage.v1') } catch { /* quota */ }
 }
+const EXT_ENABLED_KEY = 'dsh.portable-tavern.ext.enabled.v1'
+const EXT_THEME_KEY = 'dsh.portable-tavern.ext.theme.v1'
+
+/** Extension ids the user enabled on a previous visit. */
+function loadEnabledExt(): string[] {
+  try {
+    const raw = localStorage.getItem(EXT_ENABLED_KEY)
+    const list: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : []
+  } catch { return [] }
+}
+
+/** Persist the enabled extension set. */
+function saveEnabledExt(list: string[]): void {
+  try { localStorage.setItem(EXT_ENABLED_KEY, JSON.stringify(list)) } catch { /* quota */ }
+}
+
+/** The built-in theme currently applied, '' for none. */
+function loadActiveTheme(): string {
+  try { return localStorage.getItem(EXT_THEME_KEY) ?? '' } catch { return '' }
+}
+
+/** Persist the applied theme. */
+function saveActiveTheme(id: string): void {
+  try {
+    if (id === '') localStorage.removeItem(EXT_THEME_KEY)
+    else localStorage.setItem(EXT_THEME_KEY, id)
+  } catch { /* quota */ }
+}
+
 function loadTemplates(): { name: string; spec: TavernSpec }[] {
   try {
     const raw = localStorage.getItem('dsh.portable-tavern.templates.v1')
@@ -317,121 +360,17 @@ function describeSpec(spec: TavernSpec): string {
 }
 
 // ---------------------------------------------------------------------------
-// tiny form primitives
 // ---------------------------------------------------------------------------
-
-function Section(props: { title: string; hint?: string; defaultOpen?: boolean; children: React.ReactNode }): React.ReactElement {
-  const [open, setOpen] = useState(props.defaultOpen !== false)
-  return (
-    <div className={css.stSection}>
-      <button type="button" className={css.stSectionHead} onClick={() => setOpen(!open)}>
-        <span className={css.stSectionTitle}>{props.title}</span>
-        {props.hint ? <span className={css.stSectionHint}>{props.hint}</span> : null}
-        <span className={css.stSectionCaret}>{open ? '-' : '+'}</span>
-      </button>
-      {open ? <div className={css.stSectionBody}>{props.children}</div> : null}
-    </div>
-  )
-}
-
-function Field(props: { label: string; children: React.ReactNode }): React.ReactElement {
-  return (
-    <div className={css.stField}>
-      <div className={css.stLabel}>{props.label}</div>
-      {props.children}
-    </div>
-  )
-}
-
-function Slider(props: { min: number; max: number; value: number; left: string; right: string; onChange: (v: number) => void }): React.ReactElement {
-  return (
-    <div className={css.stSliderRow}>
-      <span className={css.stSliderEnd}>{props.left}</span>
-      <input type="range" min={props.min} max={props.max} value={props.value} onChange={(e) => props.onChange(Number(e.target.value))} className={css.stSlider} />
-      <span className={css.stSliderEnd}>{props.right}</span>
-      <span className={css.stSliderVal}>{props.value}</span>
-    </div>
-  )
-}
-
-function RadioGroup(props: { options: { value: string; label: string }[]; value: string; onChange: (v: string) => void }): React.ReactElement {
-  return (
-    <div className={css.stRadioGroup}>
-      {props.options.map((o) => (
-        <label key={o.value} className={cx(css.stRadio, props.value === o.value && css.stRadioActive)}>
-          <input type="radio" checked={props.value === o.value} onChange={() => props.onChange(o.value)} />
-          <span>{o.label}</span>
-        </label>
-      ))}
-    </div>
-  )
-}
-
-function Chips(props: { options: string[]; values: string[] | string; multiple?: boolean; onChange: (v: string[] | string) => void }): React.ReactElement {
-  const multiple = props.multiple === true
-  const values = multiple ? (props.values as string[]) : [props.values as string]
-  return (
-    <div className={css.stChipWrap}>
-      {props.options.map((o) => {
-        const active = values.includes(o)
-        return (
-          <button
-            key={o}
-            type="button"
-            className={cx(css.stChip, active && css.stChipActive)}
-            onClick={() => {
-              if (multiple) props.onChange(active ? values.filter((v) => v !== o) : [...values, o])
-              else props.onChange(o)
-            }}
-          >
-            {o}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-function ColorSwatches(props: { palette: string[]; value: string; onChange: (v: string) => void }): React.ReactElement {
-  return (
-    <div className={css.stSwatches}>
-      {props.palette.map((c) => (
-        <button key={c} type="button" className={cx(css.stSwatch, props.value === c && css.stSwatchActive)} style={{ background: c }} title={c} onClick={() => props.onChange(c)} />
-      ))}
-      <input type="color" value={props.value} onChange={(e) => props.onChange(e.target.value)} className={css.stColorInput} title="自定义颜色" />
-      <input className={cx(css.stInput, css.stColorText)} value={props.value} onChange={(e) => props.onChange(e.target.value)} />
-    </div>
-  )
-}
-
-function CustomAdd(props: { values: string[]; onAdd: (v: string[]) => void; placeholder: string }): React.ReactElement {
-  const [v, setV] = useState('')
-  const submit = (): void => {
-    const t = v.trim()
-    if (t && !props.values.includes(t)) props.onAdd([...props.values, t])
-    setV('')
-  }
-  return (
-    <div className={css.stCustomAdd}>
-      <input className={css.stInput} value={v} onChange={(e) => setV(e.target.value)} placeholder={props.placeholder} onKeyDown={(e) => { if (e.key === 'Enter') submit() }} />
-      <button type="button" className={cx(css.stBtn, css.stBtnSm)} onClick={submit}>添加</button>
-    </div>
-  )
-}
-
-function Btn(props: { children: React.ReactNode; variant?: 'primary' | 'ghost'; disabled?: boolean; onClick?: () => void; title?: string }): React.ReactElement {
-  return (
-    <button
-      type="button"
-      className={cx(css.stBtn, props.variant === 'primary' && css.stBtnPrimary, props.variant === 'ghost' && css.stBtnGhost, props.disabled && css.stBtnDisabled)}
-      onClick={props.onClick}
-      disabled={props.disabled}
-      title={props.title}
-    >
-      {props.children}
-    </button>
-  )
-}
+// tiny form primitives now live in ./ui.tsx so every panel shares them
+/** The panel's top-level navigation, in display order. */
+const TABS: { id: string; label: string; title: string }[] = [
+  { id: 'character', label: '角色卡', title: '塑造 / 导入角色卡' },
+  { id: 'chat', label: '聊天', title: '与角色单独对话' },
+  { id: 'rpg', label: '冒险', title: '跑团模式：系统判定，AI 叙述' },
+  { id: 'party', label: '队伍', title: '队伍与每个成员的独立模型' },
+  { id: 'plugins', label: '插件', title: '酒馆扩展与美化主题' },
+  { id: 'settings', label: '设置', title: '外观、模型接入、采样与音乐' },
+]
 
 // ---------------------------------------------------------------------------
 // main panel
@@ -472,16 +411,6 @@ function CardPreview(props: { card: CharCard; avatar: string }): React.ReactElem
   )
 }
 
-function downloadFile(filename: string, blob: Blob): void {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-}
-
 function PortableTavern(props: { store: TavernStore; open: boolean }): React.ReactElement {
   const api = useState(() => new TavernApi())[0]
   const [ws] = useState(loadWorkspace)
@@ -518,6 +447,21 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   const [bgImage, setBgImage] = useState(loadBgImage)
   const [playlist, setPlaylist] = useState<{ id: string; name: string; url: string; blob?: Blob }[]>([])
   const [currentIndex, setCurrentIndex] = useState(-1)
+  // --- tabletop RPG ---
+  const [parties, setParties] = useState<Party[]>(loadParties)
+  const [party, setParty] = useState<Party>(() => {
+    const id = loadActivePartyId()
+    const found = loadParties().find((p) => p.id === id)
+    return found ?? makeParty()
+  })
+  const [rpg, setRpg] = useState<RpgState>(() => loadRpgState() ?? makeRpgState())
+  // --- SillyTavern extension host ---
+  const stHost = useState(() => createStHost())[0]
+  const [extInstalled, setExtInstalled] = useState<StExtension[]>([])
+  const [extBuiltin, setExtBuiltin] = useState<StExtension[]>([])
+  const [extEnabled, setExtEnabled] = useState<string[]>(loadEnabledExt)
+  const [extLog, setExtLog] = useState<string[]>([])
+  const [extTheme, setExtTheme] = useState<string>(loadActiveTheme)
 
   const patch = (key: keyof TavernSpec, value: unknown): void => setSpec((prev) => ({ ...prev, [key]: value }))
   const patchN = <K extends keyof TavernSpec>(section: K, key: string, value: unknown): void =>
@@ -555,6 +499,137 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     return () => window.clearTimeout(timer)
   }, [spec, card, worldbook, chatMessages, version, chatModel, globalPrompt, avatar])
 
+
+  // -------------------------------------------------------------------------
+  // tabletop persistence + SillyTavern extension host wiring
+  // -------------------------------------------------------------------------
+
+  /** Latest chat/character state, read by the extension context on demand. */
+  const liveRef = useRef<{ chat: ChatMessage[]; card: CharCard | null }>({ chat: [], card: null })
+  liveRef.current = { chat: chatMessages, card }
+
+  /** Lets an extension push a message through the normal send path. */
+  const stSendRef = useRef<(text: string) => void>(() => undefined)
+
+  /** Append one line to the extension log, capped. */
+  const pushExtLog = (message: string): void => {
+    setExtLog((prev) => [...prev.slice(-199), new Date().toLocaleTimeString() + ' ' + message])
+  }
+
+  /** Re-read the extension lists from the host. */
+  const refreshExt = (): void => {
+    void api.extList().then((res) => {
+      setExtInstalled(res.installed)
+      setExtBuiltin(res.builtin)
+    }).catch((e) => pushExtLog('扩展列表读取失败：' + (e instanceof Error ? e.message : String(e))))
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => saveRpgState(rpg), 300)
+    return () => window.clearTimeout(timer)
+  }, [rpg])
+
+  useEffect(() => {
+    saveActivePartyId(party.id)
+  }, [party.id])
+
+  useEffect(() => {
+    refreshExt()
+  }, [])
+
+  // Install the compatibility globals once. The host reads live state through
+  // a ref so extensions never see a stale snapshot after a re-render.
+  useEffect(() => {
+    stHost.install({
+      getContext: () => {
+        const name = liveRef.current.card?.data.name ?? ''
+        return {
+          chat: liveRef.current.chat.map((m) => ({
+            name: m.role === 'user' ? '你' : (name || '角色'),
+            mes: m.content,
+            is_user: m.role === 'user',
+            is_system: false,
+            send_date: String(Date.now()),
+            extra: {},
+          })),
+          name1: '你',
+          name2: name,
+          character: liveRef.current.card ? { ...liveRef.current.card.data } as unknown as Record<string, unknown> : null,
+          chatMetadata: {},
+          mainApi: 'dsh',
+          onlineStatus: 'online',
+          chatRootId: 'pt-chat-log',
+        }
+      },
+      onSend: (text) => stSendRef.current(text),
+      onSettings: () => undefined,
+      onWarn: (message) => { pushExtLog(message) },
+    })
+    pushExtLog('兼容宿主已启动（SillyTavern API 兼容层就绪）')
+    return () => stHost.dispose()
+  }, [])
+
+  // Keep the loaded set in step with the enabled set.
+  useEffect(() => {
+    const all = extBuiltin.concat(extInstalled)
+    for (const ext of all) {
+      const wanted = extEnabled.includes(ext.id)
+      const loaded = stHost.loaded().includes(ext.id)
+      if (!wanted && loaded) {
+        stHost.unload(ext.id)
+        continue
+      }
+      if (!wanted || loaded) continue
+      void stHost.load({
+        id: ext.id,
+        js: ext.js === '' ? '' : ext.base + ext.js,
+        css: ext.css === '' ? '' : ext.base + ext.css,
+        base: ext.base,
+      }).then((res) => {
+        if (res.ok) pushExtLog('已加载扩展：' + ext.name)
+        else pushExtLog('扩展加载失败：' + ext.name + ' — ' + (res.error ?? '未知原因'))
+        for (const stub of res.stubs) pushExtLog('  · 已用空实现替代酒馆内部模块：' + stub)
+      }).catch((e) => pushExtLog('扩展加载异常：' + ext.name + ' — ' + (e instanceof Error ? e.message : String(e))))
+    }
+  }, [extEnabled, extBuiltin, extInstalled])
+
+  // A bundled theme only paints when html[data-tavern-theme] names it, so
+  // switching themes is a single attribute write plus the stylesheet already
+  // being loaded.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    if (extTheme === '') delete document.documentElement.dataset.tavernTheme
+    else document.documentElement.dataset.tavernTheme = extTheme
+  }, [extTheme])
+
+  /** Toggle one extension on or off. */
+  const onToggleExt = (id: string, on: boolean): void => {
+    setExtEnabled((prev) => {
+      const next = on ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter((x) => x !== id)
+      saveEnabledExt(next)
+      return next
+    })
+  }
+
+  /** Apply or clear the active beautification theme. */
+  const onTheme = (id: string): void => {
+    setExtTheme(id)
+    saveActiveTheme(id)
+    if (id === '') return
+    setExtEnabled((prev) => {
+      if (prev.includes(id)) return prev
+      const next = [...prev, id]
+      saveEnabledExt(next)
+      return next
+    })
+  }
+
+  // Keep the extension send hook pointing at the current render's closure, so
+  // an extension calling sendMessage() uses the same path as the send button.
+  useEffect(() => {
+    stSendRef.current = (text: string) => onSend(text)
+  })
+
   const onGenerate = (): void => {
     setGenerating(true); setError(''); setFallback(false); setRawText('')
     void api.generate(spec, version).then((res) => {
@@ -572,8 +647,8 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     }).catch((e) => setWbError(e instanceof Error ? e.message : '世界书生成失败')).finally(() => setWbGenerating(false))
   }
 
-  const onSend = (): void => {
-    const text = chatInput.trim()
+  const onSend = (override?: string): void => {
+    const text = (override ?? chatInput).trim()
     if (!text || chatSending || !card) return
     const parts = (chatModel || '').split('::')
     const isCustom = parts[0] === 'custom'
@@ -1102,6 +1177,13 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
           自动模式按每次任务给出默认温度（角色卡 0.85 / 世界书 0.7 / 聊天 0.9）。若某个模型只接受固定温度（例如 KIMI K3 只允许 1）或直接拒绝该字段，宿主会从上游报错里读出限制并自动记住，接下来对该模型一律按限制发送，用户不会再看到这条 400。选择「不发送」可手动强制省略。
         </div>
       </Section>
+      <Section title="扩展设置面板" hint="社区扩展把自己的设置界面挂在这里" defaultOpen={false}>
+        <div className={css.stLabel}>
+          已启用的扩展会把它们的设置面板插入下面的区域（对应 SillyTavern 的 #extensions_settings 与 #extensions_settings2 挂载点）。
+          如果此处为空，说明当前没有启用任何需要设置界面的扩展。
+        </div>
+        <div id="pt-ext-mount" className={css.stExtMount} />
+      </Section>
       <Section title="本地音乐" defaultOpen>
         <Field label="本地音乐（支持文件夹、按顺序播放）">
           <div className={cx(css.stRow, css.stGap)}>
@@ -1113,6 +1195,61 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
         </Field>
       </Section>
     </div>
+  )
+
+
+  const renderRpg = (): React.ReactElement => (
+    <RpgPanel
+      api={api}
+      party={party}
+      onParty={setParty}
+      state={rpg}
+      onState={setRpg}
+      chatModel={chatModel}
+      customConfigured={customConfigured}
+      customModel={llmDraft.model}
+      onGotoParty={() => setTab('party')}
+    />
+  )
+
+  const renderParty = (): React.ReactElement => (
+    <PartyPanel
+      party={party}
+      onChange={setParty}
+      library={parties}
+      onSave={() => {
+        const entry: Party = { ...JSON.parse(JSON.stringify(party)) as Party, savedAt: Date.now() }
+        const list = parties.some((p) => p.id === entry.id)
+          ? parties.map((p) => (p.id === entry.id ? entry : p))
+          : [...parties, entry]
+        setParties(list)
+        saveParties(list)
+      }}
+      onLoad={(id) => {
+        const found = parties.find((p) => p.id === id)
+        if (found) setParty(JSON.parse(JSON.stringify(found)) as Party)
+      }}
+      onDelete={(id) => {
+        const list = parties.filter((p) => p.id !== id)
+        setParties(list)
+        saveParties(list)
+      }}
+      modelOptions={modelOptions}
+      customConfigured={customConfigured}
+      customModel={llmDraft.model}
+    />
+  )
+
+  const renderPlugins = (): React.ReactElement => (
+    <ExtPanel
+      api={api}
+      enabled={extEnabled}
+      onToggle={onToggleExt}
+      onChanged={refreshExt}
+      log={extLog}
+      theme={extTheme}
+      onTheme={onTheme}
+    />
   )
 
   const renderChat = (): React.ReactElement => {
@@ -1175,12 +1312,17 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
         <button type="button" className={css.stClose} onClick={() => props.store.set(false)}>×</button>
       </div>
       <div className={css.stTabbar}>
-        <button type="button" className={cx(css.stTab, tab === 'character' && css.stTabActive)} onClick={() => setTab('character')}>角色卡</button>
-        <button type="button" className={cx(css.stTab, tab === 'chat' && css.stTabActive)} onClick={() => setTab('chat')}>聊天</button>
-        <button type="button" className={cx(css.stTab, tab === 'settings' && css.stTabActive)} onClick={() => setTab('settings')}>设置</button>
+        {TABS.map((t) => (
+          <button key={t.id} type="button" className={cx(css.stTab, tab === t.id && css.stTabActive)} onClick={() => setTab(t.id)} title={t.title}>{t.label}</button>
+        ))}
       </div>
       <div className={css.stPanelBody}>
-        {tab === 'chat' ? renderChat() : tab === 'settings' ? renderSettings() : renderCharacter()}
+        {tab === 'chat' ? renderChat()
+          : tab === 'rpg' ? renderRpg()
+            : tab === 'party' ? renderParty()
+              : tab === 'plugins' ? renderPlugins()
+                : tab === 'settings' ? renderSettings()
+                  : renderCharacter()}
       </div>
       {track
         ? (

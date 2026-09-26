@@ -2,3 +2,5 @@ node_modules/
 *.tsbuildinfo
 *.log
 *.tgz
+# scratch scripts used while verifying a build
+.tmp-*
