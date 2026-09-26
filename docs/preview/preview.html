@@ -122,20 +122,43 @@ try {
     return response.json()
   }
 
+  /** Fetch an image and turn it into the data URL the panel stores. */
+  async function toAsset(url) {
+    try {
+      var response = await fetch(url)
+      if (!response.ok) return ''
+      return await toDataUrl(await response.blob())
+    } catch (e) { return '' }
+  }
+
   async function seed() {
     var card = await fetchJson('/docs/preview/demo/card.json')
     var party = await fetchJson('/docs/preview/demo/party.json')
+    var deepseekCard = await fetchJson('/docs/preview/demo/deepseek-card.json')
 
-    // The user's own wallpaper, stored the way the panel stores a picked file.
-    var background = ''
-    try {
-      var image = await fetch('/assets/Dcat.png')
-      if (image.ok) background = await toDataUrl(await image.blob())
-    } catch (e) { /* optional */ }
+    var background = await toAsset('/docs/preview/demo/wallpaper.jpg')
+    var damei = await toAsset('/docs/preview/demo/damei.webp')
+    var blueMaid = await toAsset('/docs/preview/demo/blue-maid.jpg')
 
-    var avatar = (card.data && card.data.extensions && card.data.extensions.avatar) || ''
+    var avatar = damei || (card.data && card.data.extensions && card.data.extensions.avatar) || ''
+    if (card.data.extensions) card.data.extensions.avatar = avatar
+    deepseekCard.data.extensions = { avatar: blueMaid }
+
     var hero = party.members[0]
     var heroName = hero ? hero.name : card.data.name
+    if (hero && damei) hero.avatar = damei
+
+    // A second companion: DeepSeek herself, so the team shot shows the
+    // per-member model routing doing something.
+    party.members.push({
+      id: 'm-deepseek', name: 'DeepSeek', role: '图书馆管理员', avatar: blueMaid,
+      prompt: '深海图书馆化成人形的样子。轻快、热心、话密，把每个问题都当成值得拆开看的谜题，喜欢打比方。会因为太投入而忘记别人可能累了。',
+      attributes: { str: 8, dex: 11, con: 10, int: 18, wis: 15, cha: 15 },
+      skills: [{ name: '博学', attr: 'int', bonus: 7 }, { name: '占卜', attr: 'wis', bonus: 5 }],
+      hp: 16, maxHp: 16, status: [],
+      llm: { mode: 'dsh', provider: '', model: '', baseUrl: '', apiKey: '', customModel: '' },
+    })
+    party.name = '龙娘与深海'
 
     /** The card writes {{char}}/{{user}}; the panel stores plain text. */
     function fill(text) {
@@ -157,6 +180,15 @@ try {
     localStorage.setItem('dsh.portable-tavern.workspace.v1', JSON.stringify({
       card: card, version: 'v2', chatModel: '', globalPrompt: '', avatar: avatar,
       chat: chat, worldbook: null,
+    }))
+    localStorage.setItem('dsh.portable-tavern.threads.v1', JSON.stringify({
+      'm-deepseek': [
+        { role: 'assistant', content: deepseekCard.data.first_mes },
+        { role: 'user', content: '门上的封印是皇族的手笔，而且她认得。这能说明什么？' },
+        { role: 'assistant', content: '（把笔咬在嘴里，两只手飞快地翻书）\n\n说明那扇门是**为她家开的**，不是为防外人。\n\n（抬头，眼睛很亮）你看，封印术有一个特点：它认血脉。会"认得"某个人，就说明当初封门的人，和开门的人是同一支。\n\n那问题就变成——他们为什么要封一扇自己家的门？' },
+        { role: 'user', content: '她好像不太想谈这件事。' },
+        { role: 'assistant', content: '（动作停了一下，把书合上）\n\n……嗯。那我就不问了。\n\n（小声）不过我可以先查。查到了再问你。' },
+      ],
     }))
 
     // An adventure in progress, with the numbers computed from her real sheet
@@ -180,11 +212,18 @@ try {
         { id: 'r3', kind: 'check', who: '系统', at: 3, check: { roll: 61, required: 48, margin: 13, band: 'costly', bandLabel: '险胜', success: true, critical: 'none', directive: '', effects: { hpLoss: 0, addStatus: [], removeStatus: [], endsEncounter: false }, breakdown: [{ label: '情境基础难度（普通）', value: 55 }, { label: '智力 17 调整', value: -14 }, { label: '环境与状态修正', value: 7 }] } },
         { id: 'r4', kind: 'scene', who: '守秘人', at: 4, text: '门上的咒文在她指尖下微微发亮，然后一处一处地暗下去——不是被解开了，是**认得她**。\n\n她退了半步，翅膀绷紧。\n\n"这不可能。"她说得很轻，"这个封印……是皇族的手笔。而且是我家的。"' },
         { id: 'r5', kind: 'system', who: '剧情大纲', at: 5, text: '节点「门后的名字」触发（第 3 回合（条件：≥3））' },
+        { id: 'r6', kind: 'speech', who: 'DeepSeek', at: 6, text: '（把灯举高了一点，凑近看那扇门，鲸鱼发饰晃了一下）\n\n哇。这个咒文的写法……我在哪一卷里见过。\n\n（回头看你们，声音放轻）你们两个先别动，我记一下。' },
+        { id: 'r7', kind: 'scene', who: '守秘人', at: 7, text: '她把灯交给你，自己蹲下去，指尖沿着门框下方那道浅浅的刻痕描过去。\n\n刻痕是三个字，前两个被磨掉了，只剩最后一个还看得清——那是一个"岚"字。\n\n她抬起头，看了一眼身边的龙女，什么也没说。' },
       ],
       encounter: encounter,
       pending: null,
       inventory: ['缺了三个字的封印术残卷'],
-      facts: ['门上的封印出自皇族', '残卷缺的三个字与门上的封印同源', '藏书室深处没有窗，灯一盏比一盏暗'],
+      facts: [
+        '门上的封印出自皇族，而且认得测试龙娘',
+        '残卷缺的三个字与门上的封印同源',
+        '门框下方刻着三个字，只剩最后一个"岚"字可辨',
+        '藏书室深处没有窗，灯一盏比一盏暗',
+      ],
       streak: 1,
       firedBeats: ['demo-beat-1'],
       setup: {
@@ -204,9 +243,14 @@ try {
     localStorage.setItem('dsh.portable-tavern.activeParty.v1', party.id)
     localStorage.setItem('dsh.portable-tavern.parties.v1', JSON.stringify([party]))
     localStorage.setItem('dsh.portable-tavern.characters.v1', JSON.stringify([
-      { id: 'demo-saved', name: card.data.name, savedAt: Date.now(), card: card, worldbook: null, chat: [], avatar: avatar },
+      { id: 'demo-saved-1', name: card.data.name, savedAt: Date.now(), card: card, worldbook: null, chat: chat, avatar: avatar },
+      { id: 'demo-saved-2', name: deepseekCard.data.name, savedAt: Date.now() - 86400000, card: deepseekCard, worldbook: null, chat: [], avatar: blueMaid },
     ]))
-    localStorage.setItem('dsh.portable-tavern.settings.v1', JSON.stringify({ width: width, accent: '#4f7cff', showTrigger: true }))
+    // A glass panel over a bright wallpaper only reads as glass if the
+    // wallpaper is actually allowed through.
+    localStorage.setItem('dsh.portable-tavern.settings.v1', JSON.stringify({
+      width: width, accent: '#79a6ff', showTrigger: true, bgOpacity: 0.38,
+    }))
     if (background !== '') localStorage.setItem('dsh.portable-tavern.bgimage.v1', background)
     localStorage.setItem('dsh.portable-tavern.ext.theme.v1', theme)
     localStorage.setItem('dsh.portable-tavern.ext.enabled.v1', JSON.stringify([theme]))

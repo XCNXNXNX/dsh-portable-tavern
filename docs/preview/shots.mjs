@@ -82,11 +82,10 @@ const server = createServer((req, res) => {
   res.end(readFileSync(target))
 })
 
-/** Tabs worth a picture, with the window size that frames the panel. */
 /**
  * The window is a little wider than the panel so the panel reads as a panel,
- * and the panel is configured the way the maintainer actually runs it: glass
- * theme, the Dcat wallpaper, and a widened panel.
+ * and the panel is configured the way the maintainer actually runs it: the
+ * glass theme, their own wallpaper, and a widened panel.
  */
 const PANEL_WIDTH = Number(process.env.PT_WIDTH || 760)
 const THEME = process.env.PT_THEME || 'glass'
@@ -121,17 +120,18 @@ async function waitForFile(path, timeoutMs, notOlderThan) {
   return 0
 }
 
-for (const shot of SHOTS) {
-  const out = join(outDir, shot.name + '.png')
-  // A stale file from a previous run would satisfy the wait below instantly.
-  rmSync(out, { force: true })
-  const startedAt = Date.now()
-  const profile = join(tmpdir(), 'pt-shot-' + shot.name + '-' + process.pid)
-  const url = 'http://127.0.0.1:' + port + '/docs/preview/preview.html?tab=' + shot.tab
-    + '&theme=' + THEME + '&width=' + PANEL_WIDTH
-  // Edge's launcher hands off to a child process and returns immediately, so
-  // neither the exit code nor a synchronous wait says anything. Spawn it
-  // detached and wait for the file this run actually wrote.
+/**
+ * Ask headless Edge for one screenshot and return immediately.
+ *
+ * Edge's launcher hands off to a child process and returns at once, so neither
+ * its exit code nor a synchronous wait says anything useful.
+ * @param shot - the shot descriptor (name and window size).
+ * @param out - destination png path.
+ * @param url - the page to capture.
+ * @param tag - distinguishes retry profiles.
+ */
+function shoot(shot, out, url, tag) {
+  const profile = join(tmpdir(), 'pt-shot-' + shot.name + '-' + tag + '-' + process.pid)
   const child = spawn(browser, [
     '--headless=new',
     '--disable-gpu',
@@ -142,13 +142,34 @@ for (const shot of SHOTS) {
     '--user-data-dir=' + profile,
     '--force-device-scale-factor=2',
     '--window-size=' + shot.width + ',' + shot.height,
-    '--virtual-time-budget=6000',
+    // Generous: the harness fetches its fixtures before it boots, and a budget
+    // that expires early yields a blank page rather than a partial one.
+    '--virtual-time-budget=30000',
     '--screenshot=' + out,
     url,
   ], { detached: true, stdio: 'ignore' })
   child.unref()
-  const size = await waitForFile(out, 90_000, startedAt)
+}
+
+for (const shot of SHOTS) {
+  const out = join(outDir, shot.name + '.png')
+  // A stale file from a previous run would satisfy the wait below instantly.
+  rmSync(out, { force: true })
+  const startedAt = Date.now()
+  const url = 'http://127.0.0.1:' + port + '/docs/preview/preview.html?tab=' + shot.tab
+    + '&theme=' + THEME + '&width=' + PANEL_WIDTH
+  shoot(shot, out, url, 'a')
+  let size = await waitForFile(out, 90_000, startedAt)
+  // A blank capture (the page never booted) compresses to almost nothing; take
+  // it again rather than shipping an empty picture.
+  for (let attempt = 0; attempt < 3 && size > 0 && size < 40 * 1024; attempt++) {
+    console.log('  retry ' + shot.name + ' (previous capture was blank)')
+    rmSync(out, { force: true })
+    shoot(shot, out, url, String(attempt + 1))
+    size = await waitForFile(out, 90_000, Date.now())
+  }
   if (size === 0) throw new Error('screenshot was not produced: ' + shot.name)
+  if (size < 40 * 1024) throw new Error('screenshot came out blank: ' + shot.name)
   console.log('  wrote assets/' + shot.name + '.png (' + Math.round(size / 1024) + ' KB)')
 }
 

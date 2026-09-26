@@ -113,14 +113,22 @@ function useStoreValue(store: TavernStore): boolean {
 // persistence (localStorage + IndexedDB)
 // ---------------------------------------------------------------------------
 
-function loadTavernSettings(): { width: number; accent: string; showTrigger: boolean } {
+/** How strongly the user's own wallpaper shows through the panel. */
+const DEFAULT_BG_OPACITY = 0.16
+
+function loadTavernSettings(): { width: number; accent: string; showTrigger: boolean; bgOpacity: number } {
   try {
     const raw = localStorage.getItem('dsh.portable-tavern.settings.v1')
     const s = raw ? JSON.parse(raw) : {}
-    return { width: s.width || 540, accent: s.accent || '#4f7cff', showTrigger: s.showTrigger !== false }
-  } catch { return { width: 540, accent: '#4f7cff', showTrigger: true } }
+    return {
+      width: s.width || 540,
+      accent: s.accent || '#4f7cff',
+      showTrigger: s.showTrigger !== false,
+      bgOpacity: typeof s.bgOpacity === 'number' ? Math.min(0.7, Math.max(0, s.bgOpacity)) : DEFAULT_BG_OPACITY,
+    }
+  } catch { return { width: 540, accent: '#4f7cff', showTrigger: true, bgOpacity: DEFAULT_BG_OPACITY } }
 }
-function saveTavernSettings(s: { width: number; accent: string; showTrigger?: boolean }): void {
+function saveTavernSettings(s: { width: number; accent: string; showTrigger?: boolean; bgOpacity?: number }): void {
   try { localStorage.setItem('dsh.portable-tavern.settings.v1', JSON.stringify(s)) } catch { /* quota */ }
 }
 
@@ -899,7 +907,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     setChatError('')
   }
 
-  const updateTavern = (key: 'width' | 'accent', value: number | string): void => {
+  const updateTavern = (key: 'width' | 'accent' | 'bgOpacity', value: number | string): void => {
     setTavern((prev) => { const n = { ...prev, [key]: value }; saveTavernSettings(n); return n })
   }
 
@@ -1383,6 +1391,23 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
             {bgImage ? <Btn onClick={() => { setBgImage(''); saveBgImage('') }}>清除</Btn> : null}
           </div>
         </Field>
+        {bgImage
+          ? (
+            <Field label={'背景图强度：' + Math.round(tavern.bgOpacity * 100) + '%'}>
+              <Slider
+                min={0}
+                max={70}
+                value={Math.round(tavern.bgOpacity * 100)}
+                left="几乎看不见"
+                right="很明显"
+                onChange={(v) => updateTavern('bgOpacity', v / 100)}
+              />
+              <div className={css.stLabel}>
+                用玻璃拟态这类半透明主题时调高一点，壁纸才会真的透出来；调太高会影响文字可读性。
+              </div>
+            </Field>
+          )
+          : null}
       </Section>
       <Section title="模型接入" hint="默认直接使用 DSH 当前配置的模型与密钥；填写后可改走你自己的 OpenAI 兼容接口">
         <Field label="接口地址（Base URL，自动拼接 /chat/completions）">
@@ -1594,7 +1619,14 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
 
   return (
     <div className={css.stPanel} style={{ width: tavern.width, '--st-accent': tavern.accent, visibility: props.open ? 'visible' : 'hidden', pointerEvents: props.open ? 'auto' : 'none' } as React.CSSProperties}>
-      {bgImage ? <div className={css.stPanelBg} style={{ backgroundImage: 'url(' + bgImage + ')' }} /> : null}
+      {bgImage
+        ? (
+          <div
+            className={css.stPanelBg}
+            style={{ backgroundImage: 'url(' + bgImage + ')', opacity: tavern.bgOpacity }}
+          />
+        )
+        : null}
       <div className={css.stPanelHead}>
         <span className={css.stPanelTitle}>便携酒馆</span>
         {storageIssue !== null
