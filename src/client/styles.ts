@@ -20,6 +20,7 @@ const CSS_TEXT = `
 .stPanelBg{position:absolute;inset:0;background-size:cover;background-position:center;opacity:0.16;pointer-events:none;z-index:0}
 .stPanelHead{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid #262932}
 .stPanelTitle{font-size:15px;font-weight:700}
+.stStorageWarn{margin-left:8px;font-size:11px;font-weight:700;color:#1b1206;background:#e0a63a;border-radius:999px;padding:2px 9px;cursor:help}
 .stTabbar{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid #262932}
 .stPanelBody{flex:1;min-height:0;overflow:hidden}
 .stChar{height:100%;overflow-y:auto;padding:14px 16px;box-sizing:border-box}

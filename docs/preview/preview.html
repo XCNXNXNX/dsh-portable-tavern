@@ -176,6 +176,76 @@
   } catch (e) { /* preview still boots */ }
 
   window.__PREVIEW_TAB__ = tab
+  /**
+   * Two-phase persistence probe, driven by ?test=persist&phase=edit|check.
+   * Phase 'edit' adds a member through the UI and reports what landed in
+   * IndexedDB; phase 'check' reloads and reports what the panel restored.
+   * Two loads sharing one browser profile is exactly the "refresh and it is
+   * gone" report, reproduced.
+   */
+  function probeOut(text) {
+    var pre = document.createElement('pre')
+    pre.id = 'probe'
+    pre.textContent = text
+    document.body.appendChild(pre)
+    // Headless Edge detaches from its launcher, so stdout is not reachable:
+    // report over HTTP to whoever is driving this page instead.
+    try { fetch('/__probe?line=' + encodeURIComponent(text)) } catch (e) { /* offline */ }
+  }
+  function clickByText(selector, text) {
+    var nodes = document.querySelectorAll(selector)
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].textContent.trim() === text) { nodes[i].click(); return true }
+    }
+    return false
+  }
+  function readPartyRecord() {
+    return new Promise(function (resolve) {
+      var req = indexedDB.open('dsh-portable-tavern', 1)
+      req.onerror = function () { resolve(null) }
+      req.onsuccess = function () {
+        var db = req.result
+        try {
+          var get = db.transaction('kv', 'readonly').objectStore('kv').get('dsh.portable-tavern.party.current.v1')
+          get.onsuccess = function () { resolve(get.result || null) }
+          get.onerror = function () { resolve(null) }
+        } catch (e) { resolve(null) }
+      }
+    })
+  }
+  function runPersistenceProbe() {
+    var phase = window.__PREVIEW_PHASE__
+    setTimeout(function () {
+      // Count the member cards the party tab actually renders ("#1 岚").
+      var titles = document.querySelectorAll('.stSectionTitle')
+      var shown = 0
+      for (var i = 0; i < titles.length; i++) {
+        if (titles[i].textContent.trim().charAt(0) === '#') shown++
+      }
+      if (phase === 'edit') {
+        var added = clickByText('.stBtn', '添加成员')
+        setTimeout(function () {
+          readPartyRecord().then(function (record) {
+            var stored = record && record.members ? record.members.length : -1
+            probeOut('PHASE=edit clickedAdd=' + added + ' shownBefore=' + shown + ' storedMembers=' + stored
+              + ' legacyLocalStorage=' + (localStorage.getItem('dsh.portable-tavern.party.current.v1') === null ? 'none' : 'present'))
+          })
+        }, 2500)
+      } else {
+        readPartyRecord().then(function (record) {
+          var stored = record && record.members ? record.members.length : -1
+          probeOut('PHASE=check shownOnLoad=' + shown + ' storedMembers=' + stored)
+        })
+      }
+    }, 1500)
+  }
+  // Unconditional early ping: distinguishes "the page never ran" from
+  // "the probe logic failed", which is otherwise invisible headlessly.
+  try { fetch('/__probe?line=' + encodeURIComponent('BOOT phase=' + (params.get('phase') || '-') + ' href=' + location.href)) } catch (e) { /* offline */ }
+  // Exposed on window because the boot handler lives in a later script block.
+  window.__runPersistenceProbe = runPersistenceProbe
+  window.__PREVIEW_PHASE__ = params.get('phase') || ''
+  window.__PREVIEW_TEST__ = params.get('test') || ''
 })()
 </script>
 <script src="/vendor/react.development.js"></script>
@@ -236,10 +306,17 @@
             }
           }
           document.title = 'ready'
+          if (window.__PREVIEW_TEST__ === 'persist') {
+            try { window.__runPersistenceProbe() } catch (probeError) {
+              try { fetch('/__probe?line=' + encodeURIComponent('PREVIEW ERROR probe: ' + probeError)) } catch (e3) { /* offline */ }
+            }
+          }
         }, 120)
       }, 120)
     } catch (e) {
-      document.getElementById('boot-error').textContent = 'PREVIEW ERROR\n' + (e && e.stack ? e.stack : String(e))
+      var message = 'PREVIEW ERROR ' + (e && e.message ? e.message : String(e))
+      document.getElementById('boot-error').textContent = message
+      try { fetch('/__probe?line=' + encodeURIComponent(message)) } catch (e2) { /* offline */ }
     }
   })
 })()

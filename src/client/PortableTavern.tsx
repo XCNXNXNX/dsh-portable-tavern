@@ -16,6 +16,16 @@ import { PartyPanel } from './panels/PartyPanel.tsx'
 import { RpgPanel } from './panels/RpgPanel.tsx'
 import { cardFromMember, memberFromCard } from './character-bridge.ts'
 import {
+  HEAVY_KEYS,
+  loadRecord,
+  onStorageIssue,
+  readPref,
+  saveRecord,
+  storageEstimate,
+  writePref,
+  type StorageIssue,
+} from './storage.ts'
+import {
   loadActivePartyId,
   loadCurrentParty,
   loadParties,
@@ -130,6 +140,34 @@ function loadBgImage(): string {
 function saveBgImage(v: string): void {
   try { if (v) localStorage.setItem('dsh.portable-tavern.bgimage.v1', v); else localStorage.removeItem('dsh.portable-tavern.bgimage.v1') } catch { /* quota */ }
 }
+/** Human-readable byte size for the storage panel. */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+const MUSIC_KEY = 'dsh.portable-tavern.music.v1'
+
+/** Where the playlist left off, so reopening the tavern resumes instead of restarting. */
+interface MusicState { index: number; position: number; playing: boolean }
+
+/** Read the saved playback position (never throws). */
+function loadMusicState(): MusicState {
+  const saved = readPref<Partial<MusicState>>(MUSIC_KEY, {})
+  return {
+    index: typeof saved.index === 'number' && saved.index >= 0 ? saved.index : 0,
+    position: typeof saved.position === 'number' && saved.position >= 0 ? saved.position : 0,
+    playing: saved.playing === true,
+  }
+}
+
+/** Persist the playback position. */
+function saveMusicState(state: MusicState): void {
+  writePref(MUSIC_KEY, state)
+}
+
 const THREADS_KEY = 'dsh.portable-tavern.threads.v1'
 
 /** Per-member conversation threads, keyed by member id. */
@@ -493,6 +531,23 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   const [chatTarget, setChatTarget] = useState('card')
   /** A plan carried from the chat window into the adventure window. */
   const [carryPlan, setCarryPlan] = useState('')
+  /**
+   * False until the IndexedDB records have been read. Every autosave waits for
+   * it, otherwise the first debounce tick would write the empty defaults over
+   * the user's real data.
+   */
+  const [hydrated, setHydrated] = useState(false)
+  /** The last storage failure, surfaced instead of swallowed. */
+  const [storageIssue, setStorageIssue] = useState<StorageIssue | null>(null)
+  /** Bytes used by this origin, read lazily for the settings panel. */
+  const [storageUsage, setStorageUsage] = useState<{ usage: number; quota: number } | null>(null)
+  // --- playback position bookkeeping (so reopening resumes, not restarts) ---
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  /** Where to seek once the next track's metadata arrives. */
+  const seekRef = useRef(0)
+  const positionRef = useRef(0)
+  const playingRef = useRef(false)
+  const indexRef = useRef(0)
 
   const patch = (key: keyof TavernSpec, value: unknown): void => setSpec((prev) => ({ ...prev, [key]: value }))
   const patchN = <K extends keyof TavernSpec>(section: K, key: string, value: unknown): void =>
@@ -512,10 +567,12 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   }, [])
   useEffect(() => {
     void loadMusic().then((tracks) => {
-      if (tracks.length) {
-        setPlaylist(tracks.map((t) => ({ id: t.id, name: t.name, url: URL.createObjectURL(t.blob) })))
-        setCurrentIndex(0)
-      }
+      if (tracks.length === 0) return
+      setPlaylist(tracks.map((t) => ({ id: t.id, name: t.name, url: URL.createObjectURL(t.blob) })))
+      // Resume where the last visit stopped rather than restarting the list.
+      const saved = loadMusicState()
+      setCurrentIndex(Math.min(saved.index, tracks.length - 1))
+      seekRef.current = saved.position
     })
   }, [])
   useEffect(() => {
@@ -524,11 +581,12 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   }, [chatMessages, chatSending])
 
   useEffect(() => {
+    if (!hydrated) return
     const timer = window.setTimeout(() => {
-      saveWorkspace({ spec, card, worldbook, chat: chatMessages, version, chatModel, globalPrompt, avatar })
-    }, 300)
+      void saveRecord(HEAVY_KEYS.workspace, { spec, card, worldbook, chat: chatMessages, version, chatModel, globalPrompt, avatar })
+    }, 400)
     return () => window.clearTimeout(timer)
-  }, [spec, card, worldbook, chatMessages, version, chatModel, globalPrompt, avatar])
+  }, [spec, card, worldbook, chatMessages, version, chatModel, globalPrompt, avatar, hydrated])
 
 
   // -------------------------------------------------------------------------
@@ -556,14 +614,75 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   }
 
   useEffect(() => {
-    const timer = window.setTimeout(() => saveRpgState(rpg), 300)
-    return () => window.clearTimeout(timer)
-  }, [rpg])
+    onStorageIssue(setStorageIssue)
+    return () => onStorageIssue(null)
+  }, [])
 
   useEffect(() => {
-    const timer = window.setTimeout(() => saveMemberThreads(memberThreads), 300)
+    void storageEstimate().then(setStorageUsage)
+  }, [storageIssue])
+
+  useEffect(() => { indexRef.current = Math.max(0, currentIndex) }, [currentIndex])
+
+  /**
+   * Keep the playback position on disk. A periodic tick covers long listening,
+   * and the cleanup covers closing the panel mid-song.
+   */
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (playingRef.current) {
+        saveMusicState({ index: indexRef.current, position: positionRef.current, playing: true })
+      }
+    }, 5000)
+    return () => {
+      window.clearInterval(timer)
+      saveMusicState({ index: indexRef.current, position: positionRef.current, playing: playingRef.current })
+    }
+  }, [])
+
+  /**
+   * Read the heavy records out of IndexedDB once, migrating anything an older
+   * build left in localStorage. Until this resolves, nothing is written back.
+   */
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const [storedParty, storedParties, storedChars, storedThreads, storedRpg, storedWs] = await Promise.all([
+        loadRecord<Party>(HEAVY_KEYS.party, HEAVY_KEYS.party),
+        loadRecord<Party[]>(HEAVY_KEYS.parties, HEAVY_KEYS.parties),
+        loadRecord<SavedCharacter[]>(HEAVY_KEYS.characters, HEAVY_KEYS.characters),
+        loadRecord<Record<string, ChatMessage[]>>(HEAVY_KEYS.threads, HEAVY_KEYS.threads),
+        loadRecord<RpgState>(HEAVY_KEYS.rpg, HEAVY_KEYS.rpg),
+        loadRecord<Partial<WorkspaceState>>(HEAVY_KEYS.workspace, HEAVY_KEYS.workspace),
+      ])
+      if (cancelled) return
+      if (storedParty !== null) setParty(storedParty)
+      if (storedParties !== null) setParties(storedParties)
+      if (storedChars !== null) setSavedChars(storedChars)
+      if (storedThreads !== null) setMemberThreads(storedThreads)
+      if (storedRpg !== null) setRpg(storedRpg)
+      if (storedWs !== null && storedWs.card !== undefined && storedWs.card !== null) {
+        setCard(storedWs.card)
+        setWorldbook(storedWs.worldbook ?? null)
+        setChatMessages(storedWs.chat ?? [])
+        if (typeof storedWs.avatar === 'string') setAvatar(storedWs.avatar)
+      }
+      setHydrated(true)
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!hydrated) return
+    const timer = window.setTimeout(() => { void saveRecord(HEAVY_KEYS.rpg, rpg) }, 400)
     return () => window.clearTimeout(timer)
-  }, [memberThreads])
+  }, [rpg, hydrated])
+
+  useEffect(() => {
+    if (!hydrated) return
+    const timer = window.setTimeout(() => { void saveRecord(HEAVY_KEYS.threads, memberThreads) }, 400)
+    return () => window.clearTimeout(timer)
+  }, [memberThreads, hydrated])
 
   useEffect(() => {
     saveActivePartyId(party.id)
@@ -572,9 +691,10 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   // Continuous autosave of the team on the table, so nothing is lost just
   // because the user never pressed 保存到队伍库.
   useEffect(() => {
-    const timer = window.setTimeout(() => saveCurrentParty(party), 300)
+    if (!hydrated) return
+    const timer = window.setTimeout(() => { void saveRecord(HEAVY_KEYS.party, party) }, 400)
     return () => window.clearTimeout(timer)
-  }, [party])
+  }, [party, hydrated])
 
   useEffect(() => {
     refreshExt()
@@ -853,7 +973,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
     }
     const existing = savedChars.find((c) => c.name === name)
     const list = existing ? savedChars.map((c) => (c.name === name ? entry : c)) : [...savedChars, entry]
-    setSavedChars(list); saveCharacters(list); setError('')
+    setSavedChars(list); void saveRecord(HEAVY_KEYS.characters, list); setError('')
   }
 
   const onLoadCharacter = (c: SavedCharacter): void => {
@@ -866,7 +986,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
 
   const onDeleteCharacter = (id: string): void => {
     const list = savedChars.filter((c) => c.id !== id)
-    setSavedChars(list); saveCharacters(list)
+    setSavedChars(list); void saveRecord(HEAVY_KEYS.characters, list)
   }
 
   /**
@@ -1246,6 +1366,20 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
         used to give up and park its panel in a floating dock over the chat box.
       */}
       <div id="pt-ext-mount" className={css.stExtMount} />
+      <Section title="存储" hint="角色卡、队伍、对话都存在本机浏览器里" defaultOpen={false}>
+        <div className={css.stLabel}>
+          {storageUsage === null
+            ? '正在读取占用…'
+            : '本机已用 ' + formatBytes(storageUsage.usage) + '，浏览器给这个站点分配了 ' + formatBytes(storageUsage.quota) + '。'
+              + '角色卡和队伍的图片是主要占用，存在 IndexedDB 里（不是 5MB 的 localStorage）。'}
+        </div>
+        <div className={css.stLabel}>
+          IndexedDB 里保存的是：当前工作区、角色库、队伍库、桌面上的队伍、每个人的对话、当前这局冒险。
+        </div>
+        {storageIssue !== null
+          ? <div className={css.stNotice}>最近一次失败（{storageIssue.op === 'write' ? '写入' : '读取'}）：{storageIssue.message}</div>
+          : <div className={css.stLabel}>最近没有保存失败。</div>}
+      </Section>
       <Section title="本地音乐" defaultOpen>
         <Field label="本地音乐（支持文件夹、按顺序播放）">
           <div className={cx(css.stRow, css.stGap)}>
@@ -1342,7 +1476,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
           ? parties.map((p) => (p.id === entry.id ? entry : p))
           : [...parties, entry]
         setParties(list)
-        saveParties(list)
+        void saveRecord(HEAVY_KEYS.parties, list)
       }}
       onLoad={(id) => {
         const found = parties.find((p) => p.id === id)
@@ -1351,7 +1485,7 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       onDelete={(id) => {
         const list = parties.filter((p) => p.id !== id)
         setParties(list)
-        saveParties(list)
+        void saveRecord(HEAVY_KEYS.parties, list)
       }}
       modelOptions={modelOptions}
       customConfigured={customConfigured}
@@ -1383,8 +1517,19 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       {bgImage ? <div className={css.stPanelBg} style={{ backgroundImage: 'url(' + bgImage + ')' }} /> : null}
       <div className={css.stPanelHead}>
         <span className={css.stPanelTitle}>便携酒馆</span>
+        {storageIssue !== null
+          ? <span className={css.stStorageWarn} title={storageIssue.message}>存储告警</span>
+          : null}
         <button type="button" className={css.stClose} onClick={() => props.store.set(false)}>×</button>
       </div>
+      {storageIssue !== null
+        ? (
+          <div className={css.stNotice} style={{ margin: '8px 14px 0' }}>
+            保存失败（{storageIssue.op === 'write' ? '写入' : '读取'}）：{storageIssue.message}。
+            这次的改动可能不会在刷新后保留 —— 详情见「设置 → 存储」。
+          </div>
+        )
+        : null}
       <div className={css.stTabbar}>
         {TABS.map((t) => (
           <button key={t.id} type="button" className={cx(css.stTab, tab === t.id && css.stTabActive)} onClick={() => setTab(t.id)} title={t.title}>{t.label}</button>
@@ -1411,7 +1556,33 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       {track
         ? (
           <div className={css.stMusicBar}>
-            <audio key={currentIndex} className={css.stAudio} src={track.url} controls autoPlay onEnded={nextTrack} />
+            <audio
+              key={currentIndex}
+              ref={audioRef}
+              className={css.stAudio}
+              src={track.url}
+              controls
+              onLoadedMetadata={(e) => {
+                const el = e.currentTarget
+                // Resume mid-track; autoplay is driven by what the user was
+                // doing last time rather than being unconditional.
+                if (seekRef.current > 0 && Number.isFinite(el.duration) && seekRef.current < el.duration) {
+                  try { el.currentTime = seekRef.current } catch { /* ignore */ }
+                }
+                seekRef.current = 0
+                if (playingRef.current) void el.play().catch(() => undefined)
+              }}
+              onTimeUpdate={(e) => { positionRef.current = e.currentTarget.currentTime }}
+              onPlay={() => {
+                playingRef.current = true
+                saveMusicState({ index: indexRef.current, position: positionRef.current, playing: true })
+              }}
+              onPause={() => {
+                playingRef.current = false
+                saveMusicState({ index: indexRef.current, position: positionRef.current, playing: false })
+              }}
+              onEnded={nextTrack}
+            />
             <div className={css.stMusicInfo} title={track.name}>{(currentIndex + 1) + '/' + playlist.length + ' · ' + track.name}</div>
             <Btn onClick={prevTrack} title="上一首">上一首</Btn>
             <Btn onClick={nextTrack} title="下一首">下一首</Btn>

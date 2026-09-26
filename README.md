@@ -131,6 +131,9 @@ pnpm test:engine    # 跑团引擎与触发条件的断言
 `node docs/preview/shots.mjs` 会起一个本地静态服务器挂载 `lib/client.js`，
 用无头 Edge 逐个标签页截图到 `assets/`。界面变了重跑一次即可。
 
+`node docs/preview/persist-check.mjs` 会真的开两次浏览器（同一个 profile）：
+第一次改队伍，第二次重新加载，然后报告数据有没有活下来。存档相关改动请跑它。
+
 ## 许可
 
 MIT
