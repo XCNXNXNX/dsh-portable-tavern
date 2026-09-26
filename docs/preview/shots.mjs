@@ -10,7 +10,7 @@
  * the UI changes instead of going stale.
  */
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, extname, join, normalize, resolve } from 'node:path'
@@ -18,8 +18,41 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..', '..')
-const outDir = join(root, 'assets')
+const outDir = join(root, 'screenshots')
 mkdirSync(outDir, { recursive: true })
+
+/** Page gutter left of the right-docked panel, in CSS pixels. */
+const GUTTER = 60
+
+/**
+ * Trim the page gutter off a capture so the image is the panel and nothing
+ * else. Done through System.Drawing because Node has no image library, and
+ * losslessly, because a re-encode is exactly what makes these look mushy.
+ * @param file - png to crop in place.
+ * @param leftDevicePx - pixels to remove from the left at the capture scale.
+ */
+function cropToPanel(file, leftDevicePx) {
+  const script = [
+    'Add-Type -AssemblyName System.Drawing',
+    '$src = [System.Drawing.Image]::FromFile(' + JSON.stringify(file) + ')',
+    '$w = $src.Width - ' + String(leftDevicePx),
+    '$rect = New-Object System.Drawing.Rectangle(' + String(leftDevicePx) + ', 0, $w, $src.Height)',
+    '$bmp = New-Object System.Drawing.Bitmap($w, $src.Height)',
+    '$g = [System.Drawing.Graphics]::FromImage($bmp)',
+    '$g.DrawImage($src, (New-Object System.Drawing.Rectangle(0, 0, $w, $src.Height)), $rect, [System.Drawing.GraphicsUnit]::Pixel)',
+    '$g.Dispose(); $bmp.Dispose(); $src.Dispose()',
+    // Image.FromFile keeps the source locked, so write beside it and swap.
+    '$bmp.Save(' + JSON.stringify(file + '.crop.png') + ', [System.Drawing.Imaging.ImageFormat]::Png)',
+    'Move-Item -LiteralPath ' + JSON.stringify(file + '.crop.png') + ' -Destination ' + JSON.stringify(file) + ' -Force',
+  ].join('; ')
+  try {
+    execFileSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: 'pipe' })
+  } catch (error) {
+    // A failed crop must be loud: silently shipping an uncropped frame is how
+    // the previous run looked fine and was wrong.
+    throw new Error('crop failed for ' + file + ': ' + (error instanceof Error ? error.message : String(error)))
+  }
+}
 
 const REACT = join(root, 'node_modules', 'react', 'umd', 'react.development.js')
 const REACT_DOM = join(root, 'node_modules', 'react-dom', 'umd', 'react-dom.development.js')
@@ -68,7 +101,13 @@ async function proxyToDsh(path, res) {
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://x')
   let path = decodeURIComponent(url.pathname)
-  if (path.startsWith('/api/dsh-portable-tavern/')) { void proxyToDsh(path, res); return }
+  // Both the API and the extension carrier live on the running harness; the
+  // theme stylesheet is served from /tavern-ext/<id>/theme.css, so without this
+  // the preview silently renders the unthemed panel.
+  if (path.startsWith('/api/dsh-portable-tavern/') || path.startsWith('/tavern-ext/')) {
+    void proxyToDsh(path, res)
+    return
+  }
   if (path === '/vendor/react.development.js') path = '/node_modules/react/umd/react.development.js'
   else if (path === '/vendor/react-dom.development.js') path = '/node_modules/react-dom/umd/react-dom.development.js'
   else if (path === '/') path = '/docs/preview/preview.html'
@@ -90,12 +129,19 @@ const server = createServer((req, res) => {
 const PANEL_WIDTH = Number(process.env.PT_WIDTH || 760)
 const THEME = process.env.PT_THEME || 'glass'
 
+/**
+ * The panel is capped at 94vw, so the window is sized to make the panel come
+ * out exactly PANEL_WIDTH -- that leaves no page gutter, and the image is the
+ * panel rather than a screenshot with a border.
+ */
+const WINDOW_WIDTH = PANEL_WIDTH + 60
+
 const SHOTS = [
-  { name: 'chat', tab: 'chat', width: PANEL_WIDTH + 60, height: 1000 },
-  { name: 'adventure', tab: 'rpg', width: PANEL_WIDTH + 60, height: 1120 },
-  { name: 'party', tab: 'party', width: PANEL_WIDTH + 60, height: 1120 },
-  { name: 'themes', tab: 'plugins', width: PANEL_WIDTH + 60, height: 1120 },
-  { name: 'character', tab: 'character', width: PANEL_WIDTH + 60, height: 1000 },
+  { name: 'chat', tab: 'chat', width: WINDOW_WIDTH, height: 1000 },
+  { name: 'adventure', tab: 'rpg', width: WINDOW_WIDTH, height: 1120 },
+  { name: 'party', tab: 'party', width: WINDOW_WIDTH, height: 1120 },
+  { name: 'themes', tab: 'plugins', width: WINDOW_WIDTH, height: 1120 },
+  { name: 'character', tab: 'character', width: WINDOW_WIDTH, height: 1000 },
 ]
 
 await new Promise((done) => server.listen(0, '127.0.0.1', done))
@@ -170,7 +216,8 @@ for (const shot of SHOTS) {
   }
   if (size === 0) throw new Error('screenshot was not produced: ' + shot.name)
   if (size < 40 * 1024) throw new Error('screenshot came out blank: ' + shot.name)
-  console.log('  wrote assets/' + shot.name + '.png (' + Math.round(size / 1024) + ' KB)')
+  console.log('  wrote screenshots/' + shot.name + '.png ('
+    + Math.round(statSync(out).size / 1024) + ' KB)')
 }
 
 server.close()

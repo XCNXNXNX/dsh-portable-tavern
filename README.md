@@ -5,7 +5,7 @@
 捏角色卡、和角色聊天、把喜欢的角色组队，想出门冒险的时候再开一局跑团。
 装完就能用，所有数据只存在你自己的浏览器里。
 
-![聊天](assets/chat.png)
+![聊天](screenshots/chat.png)
 
 ## 它能做什么
 
@@ -26,19 +26,19 @@
 
 **队伍** —— 每个人的形象、属性、独立提示词，以及各自的模型接入（可以一桌混用不同 API）：
 
-![队伍](assets/party.png)
+![队伍](screenshots/party.png)
 
 **冒险** —— 系统告诉你"至少要掷出多少"，把每一栏加成摊开；成败按差值分档，AI 只负责讲：
 
-![冒险](assets/adventure.png)
+![冒险](screenshots/adventure.png)
 
 **角色卡** —— 捏好的角色可以直接拉进队伍：
 
-![角色卡](assets/character.png)
+![角色卡](screenshots/character.png)
 
 **插件** —— 内置玻璃拟态、赛博霓虹、羊皮纸、樱花物语、极简终端、夜曲六套主题：
 
-![插件](assets/themes.png)
+![插件](screenshots/themes.png)
 
 ---
 

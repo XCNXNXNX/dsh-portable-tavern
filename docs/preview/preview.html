@@ -97,7 +97,10 @@ try {
   var params = window.__PREVIEW_PARAMS__
   var tab = params.get('tab') || 'character'
   var theme = params.get('theme') || 'glass'
-  var width = Number(params.get('width') || 760)
+  // 'fill' sizes the panel to the 94vw cap so the capture is the panel and
+  // nothing else; any other value is a literal pixel width.
+  var widthParam = params.get('width') || '760'
+  var width = widthParam === 'fill' ? Math.round(window.innerWidth * 0.94) : Number(widthParam)
 
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
@@ -249,7 +252,9 @@ try {
     // A glass panel over a bright wallpaper only reads as glass if the
     // wallpaper is actually allowed through.
     localStorage.setItem('dsh.portable-tavern.settings.v1', JSON.stringify({
-      width: width, accent: '#79a6ff', showTrigger: true, bgOpacity: 0.38,
+      // The stock wallpaper strength: the shots should show the plugin as it
+      // ships, not a tuned-up variant.
+      width: width, accent: '#79a6ff', showTrigger: true, bgOpacity: 0.16,
     }))
     if (background !== '') localStorage.setItem('dsh.portable-tavern.bgimage.v1', background)
     localStorage.setItem('dsh.portable-tavern.ext.theme.v1', theme)
