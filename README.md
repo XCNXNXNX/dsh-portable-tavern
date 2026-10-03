@@ -3,7 +3,7 @@
 **在 DeepSeek Harness 里开一间属于你自己的酒馆。**
 
 捏角色卡、和角色聊天、把喜欢的角色组队，想出门冒险的时候再开一局跑团。
-装完就能用，所有数据只存在你自己的浏览器里。
+装完就能用，角色和对话保存在你自己的浏览器里。
 
 ![聊天](screenshots/chat.png)
 
@@ -118,11 +118,21 @@ dsh plugin --profile web add github:XCNXNXNX/dsh-portable-tavern
 
 装完重启 DSH，右侧会出现"便携酒馆"的悬浮标签（可以在设置里关掉，改从 DSH 设置页进）。
 
+### DSH 兼容性
+
+v0.4.1 面向 DSH Web Profile，Node.js 要求 `^22.18.0 || >=24.2.0`。逐版本结果和一次性
+Profile 验收记录见 [兼容性记录](docs/compatibility.md)。未测试的发行版保留 `unknown`；
+发布时只把已经完成安装、启动、真实页面加载及卸载检查的版本声明为 `compatible`。
+
 ## 关于你的数据
 
 - 角色卡、队伍、对话、设置全部存在**本机浏览器**的 localStorage / IndexedDB 里。
 - 你自己填的 API Key 只存在浏览器，只随单次请求发给本机酒馆路由转发，不写日志、不上传。
 - 酒馆的所有后端路由都只接受本机（127.0.0.1 / localhost）请求。
+- 安装的酒馆扩展写入 `$DSH_HOME/portable-tavern/extensions`（未设置 `DSH_HOME` 时为
+  `~/.dsh/portable-tavern/extensions`）；本机目录导入会读取所选目录。
+- 模型请求会发送角色设定及相关对话给所选模型服务。GitHub / URL 扩展安装会访问所选来源；
+  扩展的 JavaScript 在浏览器中执行，可以访问酒馆页面的数据与网络，请只安装可信来源。
 
 ## 开发
 
@@ -141,6 +151,11 @@ pnpm test:engine    # 跑团引擎与触发条件的断言
 `node docs/preview/persist-check.mjs` 会真的开两次浏览器（同一个 profile）：
 第一次改队伍并写入未生成角色卡的工作区，第二次重新加载，检查队伍、草稿、V3 选择、
 模型、全局提示词、对话与世界书是否恢复；失败时会以非零状态退出。存档相关改动请跑它。
+
+`npm pack --pack-destination .tmp-compat` 后，运行
+`npm run test:dsh -- <官方 DSH 的 lib/bin.js> <打包的 .tgz 文件>`，可使用官方 CLI
+在隔离 Profile 中安装、启动、检查真实 Edge/Chrome 页面及卸载。脚本不调用付费模型，
+会检查卸载后的完整配置与安装前一致，并清理自己创建的临时 Profile。
 
 ## 许可
 
