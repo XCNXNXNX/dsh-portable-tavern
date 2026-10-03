@@ -13,6 +13,12 @@ DSH Store 当前三版窗口为 `0.1.7-rc.2`、`0.2.0-rc.1`、`0.2.0-rc.2`。
 测试系统为 Windows，浏览器为无头 Microsoft Edge；Node.js 测试版本及发布包运行文件摘要
 记录在 [机器可读证据](compatibility-results.json)。Linux / macOS 尚未验证。
 
+`runtimeArtifacts` 的摘要基于构建产物及 Git 固定源码的 LF 字节。Windows 切换分支时曾把
+构建文件转换为 CRLF，导致 npm 发布包的原始摘要不同；规范化为 LF 后，两份运行代码与
+已验收源码逐字一致。实际发布包另外通过两版 Node、三版 DSH 的全部六组验收；
+`publishedArchiveVerification` 记录该包的 npm 完整性摘要、原始运行文件摘要和复测结果。
+仓库已为 `lib/**` 固定 LF，后续检查出文件不再转换这些产物的换行。
+
 ## 测试方式与范围
 
 `scripts/test-dsh-profile.mjs` 直接执行对应版本官方 npm 包的 CLI：

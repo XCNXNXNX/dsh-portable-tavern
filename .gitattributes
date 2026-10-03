@@ -1,0 +1,2 @@
+# Preserve the exact bytes of generated runtime bundles across Windows checkouts.
+lib/** text eol=lf

@@ -125,5 +125,106 @@
   "excludedNode": {
     "version": "22.13.0",
     "reason": "official DSH CLI uses import.meta.main; this API is undefined and the CLI does not dispatch on this version"
-  }
+  },
+  "runtimeArtifactHashFormat": "SHA-256 of canonical LF build outputs and Git blobs",
+  "publishedArchiveVerification": {
+    "schemaVersion": 1,
+    "version": "0.4.1",
+    "commit": "153bfc7e505fa300340e1ce1aac13a04b7a36416",
+    "npmIntegrity": "sha512-Ya4ZRnbrHiLjbD0OwEdCHaLJXxOux12Ul+D5W4zFehmbQzgVSgR8kKFFxwmBX62ch+5cWFxG4JTi7+w3kGTRQA==",
+    "archiveSha256": "f8f1c630256286f1c4f08f7356879a375a7d7a076c403615595b04daeb8ba886",
+    "runtimeArtifacts": {
+      "lib/client.js": {
+        "publishedSha256": "aba0f2541740c6fd708f54fc380098c208d224aa4a83414641fea3396147b605",
+        "canonicalLfSha256": "5a499a87e06f85176e9acf56d47736db667d766c6a585cdcf01ed8f43119aefb",
+        "onlyCrLfDifference": true
+      },
+      "lib/index.js": {
+        "publishedSha256": "a0c846a407fb91c9af1009b7e9c8b1fd41348e5005cc19fa329e5db7303e2ba6",
+        "canonicalLfSha256": "94f823a20e65c655ea27a396037916efdb14451458c397385fa5a510549a57f6",
+        "onlyCrLfDifference": true
+      }
+    },
+    "runs": [
+      {
+        "status": "passed",
+        "dshVersion": "0.1.7-rc.2",
+        "node": "v22.18.0",
+        "install": true,
+        "coldStart": true,
+        "authenticatedHttp": true,
+        "browserLauncher": true,
+        "browserPanel": true,
+        "uninstall": true,
+        "profileRestored": true,
+        "disposableProfile": true
+      },
+      {
+        "status": "passed",
+        "dshVersion": "0.2.0-rc.1",
+        "node": "v22.18.0",
+        "install": true,
+        "coldStart": true,
+        "authenticatedHttp": true,
+        "browserLauncher": true,
+        "browserPanel": true,
+        "uninstall": true,
+        "profileRestored": true,
+        "disposableProfile": true
+      },
+      {
+        "status": "passed",
+        "dshVersion": "0.2.0-rc.2",
+        "node": "v22.18.0",
+        "install": true,
+        "coldStart": true,
+        "authenticatedHttp": true,
+        "browserLauncher": true,
+        "browserPanel": true,
+        "uninstall": true,
+        "profileRestored": true,
+        "disposableProfile": true
+      },
+      {
+        "status": "passed",
+        "dshVersion": "0.1.7-rc.2",
+        "node": "v24.18.0",
+        "install": true,
+        "coldStart": true,
+        "authenticatedHttp": true,
+        "browserLauncher": true,
+        "browserPanel": true,
+        "uninstall": true,
+        "profileRestored": true,
+        "disposableProfile": true
+      },
+      {
+        "status": "passed",
+        "dshVersion": "0.2.0-rc.1",
+        "node": "v24.18.0",
+        "install": true,
+        "coldStart": true,
+        "authenticatedHttp": true,
+        "browserLauncher": true,
+        "browserPanel": true,
+        "uninstall": true,
+        "profileRestored": true,
+        "disposableProfile": true
+      },
+      {
+        "status": "passed",
+        "dshVersion": "0.2.0-rc.2",
+        "node": "v24.18.0",
+        "install": true,
+        "coldStart": true,
+        "authenticatedHttp": true,
+        "browserLauncher": true,
+        "browserPanel": true,
+        "uninstall": true,
+        "profileRestored": true,
+        "disposableProfile": true
+      }
+    ]
+  },
+  "maintenanceAssistant": "GPT-6.1-Sol (Codex), authorized by the repository owner"
 }
