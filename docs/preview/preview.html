@@ -51,17 +51,43 @@ function clickByText(selector, text) {
   }
   return false
 }
-function readPartyRecord() {
+function readRecord(key) {
   return new Promise(function (resolve) {
     var req = indexedDB.open('dsh-portable-tavern', 1)
     req.onerror = function () { resolve(null) }
     req.onsuccess = function () {
       try {
-        var get = req.result.transaction('kv', 'readonly').objectStore('kv').get('dsh.portable-tavern.party.current.v1')
+        var tx = req.result.transaction('kv', 'readonly')
+        tx.oncomplete = function () { req.result.close() }
+        tx.onabort = function () { req.result.close(); resolve(null) }
+        var get = tx.objectStore('kv').get(key)
         get.onsuccess = function () { resolve(get.result || null) }
         get.onerror = function () { resolve(null) }
       } catch (e) { resolve(null) }
     }
+  })
+}
+function readPartyRecord() { return readRecord('dsh.portable-tavern.party.current.v1') }
+function writeWorkspaceProbe() {
+  return readRecord('dsh.portable-tavern.workspace.v1').then(function (ws) {
+    if (!ws || !ws.spec) throw new Error('workspace was not saved')
+    ws.spec.basic.name = '存档回归角色'
+    ws.card = null // An unfinished draft must restore even without a card.
+    ws.version = 'v3'
+    ws.chatModel = 'saved::model'
+    ws.globalPrompt = '存档回归提示词'
+    ws.chat = [{ role: 'assistant', content: '存档回归对话' }]
+    ws.worldbook = { entries: [{ keys: ['回归'], content: '存档回归世界书' }] }
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open('dsh-portable-tavern', 1)
+      req.onerror = function () { reject(req.error) }
+      req.onsuccess = function () {
+        var tx = req.result.transaction('kv', 'readwrite')
+        tx.objectStore('kv').put(ws, 'dsh.portable-tavern.workspace.v1')
+        tx.oncomplete = function () { req.result.close(); resolve() }
+        tx.onabort = function () { req.result.close(); reject(tx.error) }
+      }
+    })
   })
 }
 window.__runPersistenceProbe = function () {
@@ -75,16 +101,27 @@ window.__runPersistenceProbe = function () {
     if (phase === 'edit') {
       var added = clickByText('.stBtn', '添加成员')
       setTimeout(function () {
-        readPartyRecord().then(function (record) {
+        writeWorkspaceProbe().then(readPartyRecord).then(function (record) {
           var stored = record && record.members ? record.members.length : -1
           probeOut('PHASE=edit clickedAdd=' + added + ' shownBefore=' + shown + ' storedMembers=' + stored)
-        })
+        }).catch(function (error) { probeOut('PREVIEW ERROR ' + error) })
       }, 2500)
     } else {
-      readPartyRecord().then(function (record) {
+      Promise.all([readPartyRecord(), readRecord('dsh.portable-tavern.workspace.v1')]).then(function (records) {
+        var record = records[0]
+        var ws = records[1]
         var stored = record && record.members ? record.members.length : -1
-        probeOut('PHASE=check shownOnLoad=' + shown + ' storedMembers=' + stored)
-      })
+        var restored = ws && ws.spec && ws.spec.basic.name === '存档回归角色' && ws.card === null
+          && ws.version === 'v3' && ws.chatModel === 'saved::model' && ws.globalPrompt === '存档回归提示词'
+          && ws.chat && ws.chat[0] && ws.chat[0].content === '存档回归对话'
+          && ws.worldbook && ws.worldbook.entries[0] && ws.worldbook.entries[0].content === '存档回归世界书'
+        clickByText('.stTabbar .stTab', '角色卡')
+        setTimeout(function () {
+          var nameInput = document.querySelector('input[placeholder="角色的唯一标识"]')
+          var shownName = nameInput && nameInput.value === '存档回归角色'
+          probeOut('PHASE=check shownOnLoad=' + shown + ' storedMembers=' + stored + ' workspaceRestored=' + Boolean(restored) + ' shownDraft=' + Boolean(shownName))
+        }, 200)
+      }).catch(function (error) { probeOut('PREVIEW ERROR ' + error) })
     }
   }, 1800)
 }
@@ -135,6 +172,8 @@ try {
   }
 
   async function seed() {
+    // The reload pass must read the previous pass's records, never reseed them.
+    if (params.get('test') === 'persist' && params.get('phase') === 'check') return
     var card = await fetchJson('/docs/preview/demo/card.json')
     var party = await fetchJson('/docs/preview/demo/party.json')
     var deepseekCard = await fetchJson('/docs/preview/demo/deepseek-card.json')

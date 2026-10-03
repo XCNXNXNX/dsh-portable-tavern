@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, extname, join, normalize, relative, resolve, sep } from 'node:path'
+import { dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 import type { StExtension, StManifest } from '../protocol.ts'
 import { BUILTIN_THEMES } from './builtin.ts'
@@ -36,7 +36,11 @@ export function extensionsRoot(): string {
 
 /** Directory of one installed extension. */
 export function extensionDir(id: string): string {
-  return join(extensionsRoot(), safeId(id))
+  const root = resolve(extensionsRoot())
+  const dir = resolve(root, safeId(id))
+  const rel = relative(root, dir)
+  if (rel === '' || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('无效的扩展 id')
+  return dir
 }
 
 /** Make an id safe to use as a single directory name. */
@@ -47,6 +51,7 @@ export function safeId(raw: string): string {
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
+  if (/^\.+$/.test(cleaned)) throw new Error('扩展 id 不能只包含点号')
   return cleaned === '' ? 'extension' : cleaned
 }
 
@@ -747,7 +752,8 @@ export function readExtensionFile(id: string, relativePath: string): { body: Buf
     }
     return null
   }
-  const dir = extensionDir(id)
+  let dir: string
+  try { dir = extensionDir(id) } catch { return null }
   if (!existsSync(dir)) return null
   const target = resolve(dir, clean)
   const rel = relative(dir, target)

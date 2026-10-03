@@ -130,6 +130,7 @@ dsh plugin --profile web add github:XCNXNXNX/dsh-portable-tavern
 pnpm install
 pnpm build          # esbuild 打包宿主半 + 浏览器半，并生成类型声明
 pnpm typecheck
+pnpm test           # 引擎、存储事务、路由与 SillyTavern 兼容层回归测试
 pnpm test:engine    # 跑团引擎与触发条件的断言
 ```
 
@@ -138,7 +139,8 @@ pnpm test:engine    # 跑团引擎与触发条件的断言
 用无头 Edge 逐个标签页截图到 `assets/`。界面变了重跑一次即可。
 
 `node docs/preview/persist-check.mjs` 会真的开两次浏览器（同一个 profile）：
-第一次改队伍，第二次重新加载，然后报告数据有没有活下来。存档相关改动请跑它。
+第一次改队伍并写入未生成角色卡的工作区，第二次重新加载，检查队伍、草稿、V3 选择、
+模型、全局提示词、对话与世界书是否恢复；失败时会以非零状态退出。存档相关改动请跑它。
 
 ## 许可
 

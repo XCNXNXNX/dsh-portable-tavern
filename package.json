@@ -46,6 +46,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test scripts/engine-test.mts scripts/storage-test.mts scripts/routes-test.mts src/client/st/__selftest.mjs",
     "test:engine": "node --experimental-strip-types scripts/engine-test.mts"
   },
   "peerDependencies": {
