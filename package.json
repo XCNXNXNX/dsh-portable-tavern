@@ -1,7 +1,7 @@
 {
   "name": "dsh-portable-tavern",
   "description": "Portable Tavern for the DeepSeek Harness web GUI: an RPG-style SillyTavern V2/V3 character-card generator plus tavern roleplay chat, with world-book generation and JSON/PNG import-export.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -11,6 +11,9 @@
     "access": "public"
   },
   "type": "module",
+  "engines": {
+    "node": "^22.18.0 || >=24.2.0"
+  },
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
@@ -31,9 +34,27 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-slots"
+        "@deepseek-ai/dsh-client-ui-renderer"
       ]
+    },
+    "compatibility": {
+      "dsh": "0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
+      "node": "^22.18.0 || >=24.2.0",
+      "systems": ["win32"],
+      "profiles": ["web"],
+      "dshReleases": {
+        "0.1.7-alpha.1": "unknown",
+        "0.1.7-alpha.2": "unknown",
+        "0.1.7-rc.1": "unknown",
+        "0.1.7-rc.2": "compatible",
+        "0.2.0-rc.1": "compatible",
+        "0.2.0-rc.2": "compatible"
+      },
+      "dshOperations": {
+        "0.1.7-rc.2": { "install": "passed", "start": "passed", "uninstall": "passed", "rollback": "unknown" },
+        "0.2.0-rc.1": { "install": "passed", "start": "passed", "uninstall": "passed", "rollback": "unknown" },
+        "0.2.0-rc.2": { "install": "passed", "start": "passed", "uninstall": "passed", "rollback": "unknown" }
+      }
     }
   },
   "files": [
@@ -41,19 +62,22 @@
     "cordis.patch.yml",
     "dsh.plugin.json",
     "README.md",
+    "docs/compatibility.md",
+    "docs/compatibility-results.json",
     "LICENSE"
   ],
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test:engine": "node --experimental-strip-types scripts/engine-test.mts"
+    "test": "node --experimental-strip-types --test scripts/engine-test.mts scripts/storage-test.mts scripts/routes-test.mts src/client/st/__selftest.mjs",
+    "test:engine": "node --experimental-strip-types scripts/engine-test.mts",
+    "test:dsh": "node scripts/test-dsh-profile.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-host-webserver": "*",
-    "@deepseek-ai/dsh-llm": "*",
-    "@deepseek-ai/dsh-client-runtime": "*",
-    "@deepseek-ai/dsh-client-ui-slots": "*",
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-host-webserver": "0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
     "react": "^18.2.0"
   },
   "peerDependenciesMeta": {
@@ -66,10 +90,7 @@
     "@deepseek-ai/dsh-llm": {
       "optional": true
     },
-    "@deepseek-ai/dsh-client-runtime": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-client-ui-slots": {
+    "@deepseek-ai/dsh-client-ui-renderer": {
       "optional": true
     },
     "react": {
@@ -77,11 +98,10 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.8",
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.2",
     "@types/node": "^22.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",

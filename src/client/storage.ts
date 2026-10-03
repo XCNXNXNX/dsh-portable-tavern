@@ -92,19 +92,24 @@ function openDb(): Promise<IDBDatabase | null> {
   return dbPromise
 }
 
-/** Run one transaction and resolve with its request result. */
-function transact<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>): Promise<T | null> {
+type TransactionResult<T> = { ok: true; value: T } | { ok: false; available: boolean; error: unknown }
+
+/** A successful request can still be rolled back; wait for the transaction. */
+function transact<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>): Promise<TransactionResult<T>> {
   return openDb().then((db) => {
-    if (db === null) return null
-    return new Promise<T | null>((resolve) => {
+    if (db === null) return { ok: false, available: false, error: new Error('IndexedDB 不可用') }
+    return new Promise<TransactionResult<T>>((resolve) => {
+      let tx: IDBTransaction | undefined
       try {
-        const tx = db.transaction(STORE_NAME, mode)
+        tx = db.transaction(STORE_NAME, mode)
         const request = run(tx.objectStore(STORE_NAME))
-        request.onsuccess = () => resolve(request.result)
-        request.onerror = () => resolve(null)
-        tx.onabort = () => resolve(null)
-      } catch {
-        resolve(null)
+        let error: unknown
+        request.onerror = () => { error = request.error }
+        tx.oncomplete = () => resolve({ ok: true, value: request.result })
+        tx.onabort = () => resolve({ ok: false, available: true, error: error ?? tx?.error ?? new Error('IndexedDB 事务已中止') })
+      } catch (error) {
+        try { tx?.abort() } catch { /* already inactive */ }
+        resolve({ ok: false, available: true, error })
       }
     })
   })
@@ -116,19 +121,35 @@ function transact<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => I
  * @param fallbackKey - localStorage key to migrate from when IndexedDB is empty.
  */
 export async function loadRecord<T>(key: string, fallbackKey?: string): Promise<T | null> {
-  const hit = await transact<unknown>('readonly', (store) => store.get(key) as IDBRequest<unknown>)
-  if (hit !== undefined && hit !== null) return hit as T
-  // One-time migration from the localStorage era.
-  if (fallbackKey !== undefined) {
+  // A local copy can be a newer write whose IndexedDB transaction failed.
+  // Recover it before consulting the older database record.
+  const readLocal = (localKey: string): T | null => {
     try {
-      const raw = localStorage.getItem(fallbackKey)
-      if (raw !== null) {
-        const parsed = JSON.parse(raw) as T
-        void saveRecord(key, parsed)
-        return parsed
-      }
-    } catch { /* nothing to migrate */ }
+      const raw = localStorage.getItem(localKey)
+      return raw === null ? null : JSON.parse(raw) as T
+    } catch (error) {
+      report(localKey, 'read', error)
+      return null
+    }
   }
+  const fallback = readLocal(key)
+  if (fallback !== null) {
+    await saveRecord(key, fallback)
+    return fallback
+  }
+  const hit = await transact<unknown>('readonly', (store) => store.get(key) as IDBRequest<unknown>)
+  if (hit.ok && hit.value !== undefined && hit.value !== null) return hit.value as T
+  // One-time migration from an installation using a different key.
+  if (fallbackKey !== undefined && fallbackKey !== key) {
+    const legacy = readLocal(fallbackKey)
+    if (legacy !== null) {
+      if (await saveRecord(key, legacy)) {
+        try { localStorage.removeItem(fallbackKey) } catch { /* keep the legacy copy */ }
+      }
+      return legacy
+    }
+  }
+  if (!hit.ok && hit.available) report(key, 'read', hit.error)
   return null
 }
 
@@ -140,10 +161,9 @@ export async function loadRecord<T>(key: string, fallbackKey?: string): Promise<
  */
 export async function saveRecord(key: string, value: unknown): Promise<boolean> {
   const result = await transact<IDBValidKey>('readwrite', (store) => store.put(value, key))
-  if (result !== null) {
+  if (result.ok) {
     // Drop the localStorage copy once the record is safely in IndexedDB.
     try { localStorage.removeItem(key) } catch { /* ignore */ }
-    reported.delete('write:' + key + ':IndexedDB 写入失败')
     return true
   }
   // IndexedDB is unavailable (private mode, disabled storage). Fall back to
@@ -160,7 +180,13 @@ export async function saveRecord(key: string, value: unknown): Promise<boolean> 
 
 /** Delete one record. */
 export async function deleteRecord(key: string): Promise<void> {
-  await transact('readwrite', (store) => store.delete(key))
+  const result = await transact('readwrite', (store) => store.delete(key))
+  if (!result.ok && result.available) {
+    report(key, 'write', result.error)
+    return
+  }
+  // Otherwise a deleted fallback record would be migrated back on next load.
+  try { localStorage.removeItem(key) } catch (error) { report(key, 'write', error) }
 }
 
 // ---------------------------------------------------------------------------

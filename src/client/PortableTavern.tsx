@@ -575,13 +575,15 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
   const customConfigured = llmDraft.baseUrl.trim() !== '' && llmDraft.apiKey.trim() !== '' && llmDraft.model.trim() !== ''
 
   useEffect(() => {
+    if (!hydrated) return
     void api.models().then((res) => {
       setModelOptions(res.options)
-      if (!chatModel && res.current?.provider && res.current?.model) {
-        setChatModel(res.current.provider + '::' + res.current.model)
+      if (res.current?.provider && res.current?.model) {
+        const defaultModel = res.current.provider + '::' + res.current.model
+        setChatModel((current) => current || defaultModel)
       }
     }).catch(() => undefined)
-  }, [])
+  }, [hydrated])
   useEffect(() => {
     void loadMusic().then((tracks) => {
       if (tracks.length === 0) return
@@ -733,10 +735,14 @@ function PortableTavern(props: { store: TavernStore; open: boolean }): React.Rea
       if (storedChars !== null) setSavedChars(storedChars)
       if (storedThreads !== null) setMemberThreads(storedThreads)
       if (storedRpg !== null) setRpg(storedRpg)
-      if (storedWs !== null && storedWs.card !== undefined && storedWs.card !== null) {
-        setCard(storedWs.card)
+      if (storedWs !== null) {
+        if (storedWs.spec !== undefined) setSpec(storedWs.spec)
+        if (storedWs.card !== undefined) setCard(storedWs.card)
         setWorldbook(storedWs.worldbook ?? null)
         setChatMessages(storedWs.chat ?? [])
+        if (storedWs.version === 'v2' || storedWs.version === 'v3') setVersion(storedWs.version)
+        if (typeof storedWs.chatModel === 'string') setChatModel(storedWs.chatModel)
+        if (typeof storedWs.globalPrompt === 'string') setGlobalPrompt(storedWs.globalPrompt)
         if (typeof storedWs.avatar === 'string') setAvatar(storedWs.avatar)
       }
       setHydrated(true)

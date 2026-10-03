@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "pluginVersion": "0.4.1",
+  "checkedAt": "2026-10-03T07:29:43Z",
+  "method": "official npm DSH CLI, packed plugin, disposable web Profile and actual headless browser",
+  "scope": "partial: install, host routes, frontend mount and uninstall; no paid model calls, rollback or security audit",
+  "platform": "win32",
+  "browser": {
+    "name": "Microsoft Edge",
+    "version": "154.0.4258.53"
+  },
+  "runtimeArtifacts": {
+    "lib/client.js": "sha256:5a499a87e06f85176e9acf56d47736db667d766c6a585cdcf01ed8f43119aefb",
+    "lib/index.js": "sha256:94f823a20e65c655ea27a396037916efdb14451458c397385fa5a510549a57f6"
+  },
+  "officialDshTarballs": {
+    "0.1.7-rc.2": "sha512-SQFhriLvza8GnFApnC5/32AgpcyKxrWnYXhvwDOLJdgWpkCX2EexyR9c8kCkMITJXnFLEN3Qb2CEh0W36vkLyw==",
+    "0.2.0-rc.1": "sha512-F6hKNVoGgBDIzSiyRaIlobq4UD6cwxUjh+nwXqcDmufDh87TE1izsYzs8L5cZNpF2JmPnFM1mXRNnRJ0cs43ng==",
+    "0.2.0-rc.2": "sha512-EAJ3gPNcVt/uv8X19PMm9NkVhWgT7xXNMk0UKCVm+IQ5rpSQOcsMUa0HWlnYYVybKMsccjcRB21vVVsaXQ6IdA=="
+  },
+  "regression": {
+    "nodeVersions": [
+      "22.18.0",
+      "24.18.0"
+    ],
+    "testCount": 40,
+    "engineAssertions": 79,
+    "typecheck": "passed",
+    "build": "passed",
+    "browserPersistence": "passed"
+  },
+  "runs": [
+    {
+      "status": "passed",
+      "dshVersion": "0.1.7-rc.2",
+      "node": "v24.18.0",
+      "install": true,
+      "coldStart": true,
+      "authenticatedHttp": true,
+      "browserLauncher": true,
+      "browserPanel": true,
+      "uninstall": true,
+      "profileRestored": true,
+      "disposableProfile": true
+    },
+    {
+      "status": "passed",
+      "dshVersion": "0.2.0-rc.1",
+      "node": "v24.18.0",
+      "install": true,
+      "coldStart": true,
+      "authenticatedHttp": true,
+      "browserLauncher": true,
+      "browserPanel": true,
+      "uninstall": true,
+      "profileRestored": true,
+      "disposableProfile": true
+    },
+    {
+      "status": "passed",
+      "dshVersion": "0.2.0-rc.2",
+      "node": "v24.18.0",
+      "install": true,
+      "coldStart": true,
+      "authenticatedHttp": true,
+      "browserLauncher": true,
+      "browserPanel": true,
+      "uninstall": true,
+      "profileRestored": true,
+      "disposableProfile": true
+    },
+    {
+      "status": "passed",
+      "dshVersion": "0.1.7-rc.2",
+      "node": "v22.18.0",
+      "install": true,
+      "coldStart": true,
+      "authenticatedHttp": true,
+      "browserLauncher": true,
+      "browserPanel": true,
+      "uninstall": true,
+      "profileRestored": true,
+      "disposableProfile": true
+    },
+    {
+      "status": "passed",
+      "dshVersion": "0.2.0-rc.1",
+      "node": "v22.18.0",
+      "install": true,
+      "coldStart": true,
+      "authenticatedHttp": true,
+      "browserLauncher": true,
+      "browserPanel": true,
+      "uninstall": true,
+      "profileRestored": true,
+      "disposableProfile": true
+    },
+    {
+      "status": "passed",
+      "dshVersion": "0.2.0-rc.2",
+      "node": "v22.18.0",
+      "install": true,
+      "coldStart": true,
+      "authenticatedHttp": true,
+      "browserLauncher": true,
+      "browserPanel": true,
+      "uninstall": true,
+      "profileRestored": true,
+      "disposableProfile": true
+    }
+  ],
+  "unknown": {
+    "dshReleases": [
+      "0.1.7-alpha.1",
+      "0.1.7-alpha.2",
+      "0.1.7-rc.1"
+    ],
+    "platforms": [
+      "darwin",
+      "linux"
+    ],
+    "rollback": true,
+    "paidModelCalls": true
+  },
+  "excludedNode": {
+    "version": "22.13.0",
+    "reason": "official DSH CLI uses import.meta.main; this API is undefined and the CLI does not dispatch on this version"
+  }
+}

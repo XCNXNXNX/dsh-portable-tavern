@@ -45,6 +45,8 @@ import { chatReply, generateCard, generateWorldbook, listModels, testCustom } fr
 
 /** Cap on JSON request bodies (specs and chat histories are small). */
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024
+/** Base64 for a 48 MiB ZIP, plus room for JSON metadata. */
+const MAX_EXTENSION_BODY_BYTES = 64 * 1024 * 1024 + 64 * 1024
 
 /** Extract a sanitized custom-endpoint config from a request body, if any. */
 function readCustom(body: Record<string, unknown> | undefined): LlmCustom | undefined {
@@ -192,6 +194,19 @@ function readEncounter(raw: unknown): Encounter | null {
   }
 }
 
+/** Private chat receives an encounter summary with string action labels. */
+function readChatEncounter(raw: unknown): NonNullable<MemberChatRequest['adventure']>['encounter'] {
+  if (!isRecord(raw)) return null
+  return {
+    title: typeof raw.title === 'string' ? raw.title.slice(0, 80) : '遭遇',
+    description: typeof raw.description === 'string' ? raw.description.slice(0, 600) : '',
+    options: (Array.isArray(raw.options) ? raw.options : [])
+      .filter((option): option is string => typeof option === 'string' && option.trim() !== '')
+      .slice(0, 6)
+      .map((option) => option.slice(0, 40)),
+  }
+}
+
 /** Read a pending check posted back by the browser. */
 function readPending(raw: unknown): PendingCheck | null {
   if (!isRecord(raw)) return null
@@ -253,13 +268,13 @@ function writeError(res: ServerResponse, status: number, error: string): void {
 }
 
 /** Read a JSON request body (undefined when too large or unparseable). */
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
+async function readJsonBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<Record<string, unknown> | undefined> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
     const buffer = chunk as Buffer
     size += buffer.length
-    if (size > MAX_JSON_BODY_BYTES) return undefined
+    if (size > maxBytes) return undefined
     chunks.push(buffer)
   }
   try {
@@ -586,7 +601,7 @@ export function makeRoutes(ctx: Context): WebRoute[] {
       path: TAVERN_API.extInstall,
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return
-        const body = await readJsonBody(req)
+        const body = await readJsonBody(req, MAX_EXTENSION_BODY_BYTES)
         if (body === undefined) { writeError(res, 400, 'invalid JSON body'); return }
         const request: StInstallRequest = {
           url: typeof body.url === 'string' ? body.url : undefined,
@@ -683,13 +698,7 @@ export function makeRoutes(ctx: Context): WebRoute[] {
           ? {
             scene: typeof body.adventure.scene === 'string' ? body.adventure.scene.slice(0, 2000) : '',
             beat: typeof body.adventure.beat === 'string' ? body.adventure.beat.slice(0, 2000) : '',
-            encounter: readEncounter(body.adventure.encounter) === null
-              ? null
-              : {
-                title: (readEncounter(body.adventure.encounter) as Encounter).title,
-                description: (readEncounter(body.adventure.encounter) as Encounter).description,
-                options: (readEncounter(body.adventure.encounter) as Encounter).options.map((o) => o.label),
-              },
+            encounter: readChatEncounter(body.adventure.encounter),
           }
           : undefined
         try {
@@ -744,4 +753,3 @@ export function makeRoutes(ctx: Context): WebRoute[] {
 
   return routes
 }
-
